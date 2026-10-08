@@ -16,7 +16,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"os/signal"
+	"runtime"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -115,7 +117,14 @@ func run(ctx context.Context, args []string) error {
 	lc, lcErr := link.Open()
 	switch name {
 	case "login":
-		return noArguments(cmd, rest, func() error { return login(ctx, session, cc, lc, lcErr) })
+		opts, pos, err := cmd.parse(rest)
+		if err != nil {
+			return err
+		}
+		if len(pos) > 0 {
+			return fmt.Errorf("login: takes no arguments, got %q (see `prusactl help login`)", pos[0])
+		}
+		return login(ctx, opts, session, cc, lc, lcErr)
 	case "status":
 		opts, pos, err := cmd.parse(rest)
 		if err != nil {
@@ -305,9 +314,30 @@ func (terminalPrompter) OneTimeCode() (string, error) {
 	return ask("Two-factor code from your authenticator app: ")
 }
 
-func login(ctx context.Context, session *auth.Session, cc *connect.Client, lc *link.Client, lcErr error) error {
-	fmt.Fprintln(os.Stderr, "Signing in to Prusa Connect with your Prusa Account.")
-	if _, err := session.Login(ctx, terminalPrompter{host: accountHost(session)}); err != nil {
+func login(ctx context.Context, o options, session *auth.Session, cc *connect.Client, lc *link.Client, lcErr error) error {
+	if o.given("no-open") && !o.on("manual") {
+		return errors.New("login: --no-open only applies to --manual")
+	}
+	var err error
+	if o.on("manual") {
+		// The link goes to stdout on a line of its own, so a script or an
+		// agent can pick it out; everything around it goes to stderr.
+		_, err = session.LoginManual(ctx, func(u string) {
+			fmt.Fprintln(os.Stderr, "Open this link in a browser and approve the sign-in to Prusa Connect:")
+			fmt.Println(u)
+			if !o.on("no-open") && openBrowser(u) == nil {
+				fmt.Fprintln(os.Stderr, "(Opened it in your browser.)")
+			}
+			fmt.Fprintln(os.Stderr, "Then give the address the browser ended on (https://connect.prusa3d.com/login/auth-callback?code=...) on one line of stdin.")
+		}, func() (string, error) { return ask("> ") })
+	} else {
+		if !term.IsTerminal(int(os.Stdin.Fd())) {
+			return errors.New("login: asking for a password needs an interactive terminal; use `prusactl login --manual` and write the final browser address to stdin (see `prusactl help login`)")
+		}
+		fmt.Fprintln(os.Stderr, "Signing in to Prusa Connect with your Prusa Account.")
+		_, err = session.Login(ctx, terminalPrompter{host: accountHost(session)})
+	}
+	if err != nil {
 		return err
 	}
 	if err := server.RegisterUser(ctx, cc); err != nil {
@@ -315,6 +345,25 @@ func login(ctx context.Context, session *auth.Session, cc *connect.Client, lc *l
 	}
 	fmt.Printf("Signed in. The session is saved in %s and renews itself.\n", secret.Where())
 	return status(ctx, server.New(session, cc, lc, lcErr, buildVersion()), lc)
+}
+
+// openBrowser asks the desktop to show u. It reports whether it could start a
+// browser, not whether one appeared.
+func openBrowser(u string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", u)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", u)
+	default:
+		cmd = exec.Command("xdg-open", u)
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go cmd.Wait()
+	return nil
 }
 
 func status(ctx context.Context, srv *server.Server, lc *link.Client) error {

@@ -180,6 +180,16 @@ code if your account has one. It fills in Prusa's own login page over HTTPS the
 same way a browser would. It then trades the resulting code for tokens, using
 the OAuth + PKCE flow of the Connect web app.
 
+**Letting an AI agent sign in for you.** `prusactl login --manual` never sees
+a password. It prints a Prusa Account link on a line of its own (and opens it
+in your browser unless you pass `--no-open`), then reads one line from stdin:
+the address the browser ends on after you approve, which looks like
+`https://connect.prusa3d.com/login/auth-callback?code=...&state=...` (the bare
+`code=` value also works). An agent can drive it.
+There is no loopback mode: Prusa Account rejects a
+`127.0.0.1` redirect for the Connect client ("Mismatching redirect URI"), so
+the code can only be read from the address bar.
+
 - **Your password** is sent only to account.prusa3d.com and is never stored.
 - **Where tokens are kept:** the OS keychain (macOS Keychain, Secret Service, or
   Windows Credential Manager), under the service `prusactl`. A machine without
@@ -223,7 +233,7 @@ printer you can leave it out. `via: "direct"` or `via: "connect"` forces a route
 
 ```text
 prusactl setup [ADDRESS]           connect directly to the printer on your network
-prusactl login                     optional: sign in to Prusa Connect
+prusactl login [--manual]          optional: sign in to Prusa Connect
 prusactl logout                    forget the Prusa Connect session
 prusactl status                    printer state and how it is reachable
 prusactl mcp                       run the MCP server on stdio

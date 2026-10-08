@@ -62,10 +62,22 @@ Settings > Network > PrusaLink.`,
 	{
 		Name:    "login",
 		Summary: "Sign in to Prusa Connect (optional)",
-		Help: `Asks for your Prusa Account email, password, and two-factor code in the
-terminal. The password goes only to account.prusa3d.com and is never saved;
-the session is saved and renews itself. Prusa Connect adds remote access, the
-camera, on-screen dialogs, the print queue, and history.`,
+		Args:    "[flags]",
+		Help: `Signs in to Prusa Connect, which adds remote access, the camera, on-screen
+dialogs, the print queue, and history. The session is saved and renews itself.
+
+By default it asks for your Prusa Account email, password, and two-factor code
+in the terminal. The password goes only to account.prusa3d.com and is never
+saved.
+
+--manual avoids the password: it prints a Prusa Account link on its own line of
+stdout, you approve it in any browser, and you give it the address the browser
+ends on (https://connect.prusa3d.com/login/auth-callback?code=...&state=...) as
+one line on stdin. The address may also be just its code= value.`,
+		Flags: []flagSpec{
+			{Name: "manual", Usage: "approve in a browser and give the final address on stdin"},
+			{Name: "no-open", Usage: "only print the link; don't start a browser (with --manual)"},
+		},
 	},
 	{
 		Name:    "logout",

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- `prusactl login --manual` signs in without a password passing through the
+  terminal, so an AI agent can run it. It prints the Prusa Account link on its
+  own line, then reads the address the browser ends on
+  (`https://connect.prusa3d.com/login/auth-callback?code=...`) from stdin, so an
+  agent can keep stdin open, read the address from a browser tab, and write it
+  back. `--no-open` stops it starting a browser. A loopback mode doesn't exist
+  because Prusa Account rejects a localhost redirect for the Connect client
+  ("Mismatching redirect URI").
+- `prusactl login` without `--manual` says so when it has no terminal to ask for
+  a password on, rather than failing on the prompt.
 - `prusactl status` and the printer summary show how long a running print has
   left, how long it has run, and when it should finish on the local clock, for
   example `PRINTING 89%, 23m left (ends ~12:41), 2h10m elapsed, nozzle 250/250°C,

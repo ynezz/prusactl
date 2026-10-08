@@ -127,7 +127,17 @@ func (s *Session) Invalidate(access string) {
 // Login signs in with the user's Prusa Account credentials (see
 // PasswordLogin) and stores the resulting tokens.
 func (s *Session) Login(ctx context.Context, prompt Prompter) (*Token, error) {
-	tok, err := s.Config.PasswordLogin(ctx, prompt)
+	return s.save(s.Config.PasswordLogin(ctx, prompt))
+}
+
+// LoginManual signs in with a pasted redirect URL (see Config.ManualLogin) and
+// stores the resulting tokens.
+func (s *Session) LoginManual(ctx context.Context, announce func(authURL string), read func() (string, error)) (*Token, error) {
+	return s.save(s.Config.ManualLogin(ctx, announce, read))
+}
+
+// save stores the tokens a login produced.
+func (s *Session) save(tok *Token, err error) (*Token, error) {
 	if err != nil {
 		return nil, err
 	}

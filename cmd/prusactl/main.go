@@ -334,6 +334,7 @@ func status(ctx context.Context, srv *server.Server, lc *link.Client) error {
 			if p, ok := s.Job["progress"]; ok {
 				line += fmt.Sprintf(" %v%%", p)
 			}
+			line += jobTiming(s.Job, time.Now())
 			if _, ok := s.Printer["temp_nozzle"]; ok {
 				line += fmt.Sprintf(", nozzle %s/%s°C, bed %s/%s°C", num(s.Printer["temp_nozzle"]),
 					num(s.Printer["target_nozzle"]), num(s.Printer["temp_bed"]), num(s.Printer["target_bed"]))
@@ -412,6 +413,7 @@ func connectLine(p map[string]any) string {
 		if pr, ok := job["progress"]; ok {
 			line += fmt.Sprintf(" %v%%", pr)
 		}
+		line += jobTiming(job, time.Now())
 	}
 	if t, ok := p["temp"].(map[string]any); ok {
 		line += fmt.Sprintf(", nozzle %s/%s°C, bed %s/%s°C", num(t["temp_nozzle"]), num(t["target_nozzle"]), num(t["temp_bed"]), num(t["target_bed"]))

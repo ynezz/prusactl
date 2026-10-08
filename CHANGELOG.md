@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `prusactl status` and the printer summary show how long a running print has
+  left, how long it has run, and when it should finish on the local clock, for
+  example `PRINTING 89%, 23m left (ends ~12:41), 2h10m elapsed, nozzle 250/250°C,
+  bed 85/85°C`. `get_printer` and `list_printers` gain `time_elapsed` and
+  `ends_at` next to `time_remaining`. Missing or negative values are left out.
 - **Camera snapshots work again.** Around 2026-09-30 Prusa moved cameras to a
   new camera service, and the endpoints `get_camera_snapshot` and
   `prusactl camera` used stopped serving images (404), which prusactl reported

@@ -72,7 +72,7 @@ func (s *Server) directStatus(ctx context.Context) (map[string]any, error) {
 	if hasJob {
 		jobMap = decode(job)
 	}
-	out["summary"] = summarizeDirect(decode(status), jobMap)
+	out["summary"] = summarizeDirect(decode(status), jobMap, time.Now())
 	return out, nil
 }
 
@@ -148,7 +148,7 @@ func (s *Server) addPrinterTools() {
 		}
 		return jsonResult(withVia(t, map[string]any{
 			"status":  redactRaw(out),
-			"summary": summarizeConnect(decode(out)),
+			"summary": summarizeConnect(decode(out), time.Now()),
 		}))
 	})
 

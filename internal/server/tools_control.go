@@ -69,6 +69,11 @@ func connectState(p map[string]any, uuid string) (string, error) {
 	return "", connect.Missing("GET", printerPath(uuid), "connect_state")
 }
 
+// stateError is a command refused because of the printer's current state.
+type stateError struct{ msg string }
+
+func (e *stateError) Error() string { return e.msg }
+
 type commandResult struct {
 	Printer string         `json:"printer"`
 	Command string         `json:"command"`
@@ -146,8 +151,8 @@ func (s *Server) runCommand(ctx context.Context, p printerSummary, command strin
 			return nil, err
 		}
 		if !slices.Contains(match.ExecutableFromState, st) {
-			return nil, fmt.Errorf("%s can't run %s while %s; allowed in: %s",
-				p.Name, command, st, strings.Join(match.ExecutableFromState, ", "))
+			return nil, &stateError{fmt.Sprintf("%s can't run %s while %s; allowed in: %s",
+				p.Name, command, st, strings.Join(match.ExecutableFromState, ", "))}
 		}
 	}
 

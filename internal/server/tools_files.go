@@ -860,26 +860,36 @@ func (s *Server) uploadViaConnect(ctx context.Context, p printerSummary, localPa
 	return &uploadResult{Hash: hash, Path: path.Join(destination, filename), Upload: created, File: fileJSON}, nil
 }
 
-// defaultStorage returns the path of the printer's first storage.
+// defaultStorage returns the path of the printer's first writable storage,
+// preferring a USB drive.
 func (s *Server) defaultStorage(ctx context.Context, uuid string) (string, error) {
 	var resp struct {
 		Storages []struct {
 			Path       string `json:"path"`
 			Mountpoint string `json:"mountpoint"`
+			Type       string `json:"type"`
 			ReadOnly   bool   `json:"read_only"`
+			Corrupted  bool   `json:"corrupted"`
 		} `json:"storages"`
 	}
 	if err := s.connect.Get(ctx, printerPath(uuid, "storages"), nil, &resp); err != nil {
 		return "", err
 	}
+	best, bestUSB := "", false
 	for _, st := range resp.Storages {
 		path := st.Path
 		if path == "" {
 			path = st.Mountpoint
 		}
-		if path != "" && !st.ReadOnly {
-			return strings.TrimRight(path, "/") + "/", nil
+		if path == "" || st.ReadOnly || st.Corrupted {
+			continue
+		}
+		if usb := strings.EqualFold(st.Type, "USB"); best == "" || (usb && !bestUSB) {
+			best, bestUSB = path, usb
 		}
 	}
-	return "", errors.New("the printer reports no writable storage (is a USB drive inserted?)")
+	if best == "" {
+		return "", errors.New("the printer reports no writable storage (is a USB drive inserted?)")
+	}
+	return strings.TrimRight(best, "/") + "/", nil
 }

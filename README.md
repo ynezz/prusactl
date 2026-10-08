@@ -148,6 +148,11 @@ an installed copy.
 prusactl is also listed in the [MCP Registry](https://registry.modelcontextprotocol.io)
 as `io.github.trevin-lee/prusactl`, for clients that browse it.
 
+**A skill for Claude Code:** [`skills/prusactl/SKILL.md`](skills/prusactl/SKILL.md)
+teaches an agent the workflows (checking status, starting a print after looking
+at the plate, watching for failures, updating firmware) and the hazards. Copy the
+folder to `~/.claude/skills/prusactl/` (or a project's `.claude/skills/`) to use it.
+
 ## How it works
 
 ```mermaid
@@ -219,7 +224,7 @@ a password. It prints a Prusa Account link on a line of its own (and opens it
 in your browser unless you pass `--no-open`), then reads one line from stdin:
 the address the browser ends on after you approve, which looks like
 `https://connect.prusa3d.com/login/auth-callback?code=...&state=...` (the bare
-`code=` value also works). An agent can drive it.
+`code=` value also works). An agent can drive it; `skills/prusactl/SKILL.md` says how.
 There is no loopback mode: Prusa Account rejects a
 `127.0.0.1` redirect for the Connect client ("Mismatching redirect URI"), so
 the code can only be read from the address bar. It also relies on Connect's
@@ -356,6 +361,10 @@ Firmware goes through Prusa Connect only, so you need `prusactl login`.
   MESH_BED_LEVELING, or START_PRINT) also needs `plate_clear: true`, since the
   last part may still be there. Marking the printer ready is the same
   confirmation. `api_request` is raw access and skips these checks.
+- **`plate_clear` is the agent's own claim.** Nothing can check that the plate is
+  empty, so the tool descriptions tell the agent to verify it with a camera
+  snapshot or the user's word before passing it. Deletes are permanent, and
+  pausing is the recommended first move for a print that looks wrong.
 - **`run_gcode` runs as a tiny print job.** So it only works while the printer is
   idle, and it shows up in the printer's history. It also leaves the file
   `/usb/prusactl-macro.gcode` on the printer, which each run overwrites.

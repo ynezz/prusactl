@@ -155,7 +155,7 @@ func (s *Server) addPrinterTools() {
 		Name: "get_camera_snapshot",
 		Description: "The latest image from the printer's camera, so you can see the print, the bed, and the nozzle. " +
 			"Use it before starting a print or moving anything (is the plate clear?) and to watch a print for " +
-			"failures. " +
+			"failures. It is the only way to check the plate yourself: plate_clear is just your say-so. " +
 			"Where the picture comes from: the printer's own camera API if it has one; else " +
 			"the camera's RTSP stream, if its address is saved (prusactl setup --camera rtsp://<camera-ip>/live, or " +
 			"PRUSACTL_CAMERA_URL), grabbed with ffmpeg, which must be installed; else Prusa Connect. via=direct " +

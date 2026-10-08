@@ -397,8 +397,9 @@ func (s *Server) addControlTools() {
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "control_print",
 		Description: "Pause, resume, or stop the current print. A question on the printer's screen (state ATTENTION) " +
-			"can't be answered this way; use respond_to_dialog through Prusa Connect. Stopping is final: the job can't " +
-			"be resumed and the part stays on the plate.",
+			"can't be answered this way; use respond_to_dialog through Prusa Connect. Pause is reversible and is " +
+			"the right first move when a print looks wrong; stop is final: the job can't be resumed and the part " +
+			"stays on the plate. Stop only for a clear failure or when the user says so.",
 		Annotations: mutating("Pause/resume/stop print", true),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in controlPrintInput) (*mcp.CallToolResult, any, error) {
 		action := strings.ToLower(strings.TrimSpace(in.Action))
@@ -476,9 +477,12 @@ func (s *Server) addControlTools() {
 			"job (/usb/prusactl-macro.gcode) and starts it, so it only works while the printer is idle (not " +
 			"printing or paused). This is how to heat (M104/M140/M109/M190), home (G28), move (G90/G91 + G1), " +
 			"load/unload filament (M701/M702), level (G29), or send any other command when Prusa Connect isn't " +
-			"available. It shows up on the printer and in history as a short print. Moves act on real hardware: " +
-			"make sure nothing is in the way. The G-code runs as a one-off job from " +
-			strconv.Quote(macroPath) + " on the printer, which each run overwrites.",
+			"available. It is not a console: the G-code is written to " + strconv.Quote(macroPath) + " on the printer, " +
+			"overwriting the previous run's, and started as a real print job. It shows up on the printer and in " +
+			"history as a short print, occupies the printer until it ends (control_print stop cancels it), and " +
+			"does exactly what the G-code says, with no checks on its content. Moves act on real hardware: make " +
+			"sure nothing is in the way. After a finished or stopped print it needs plate_clear=true, which is your " +
+			"own assertion: verify the plate with get_camera_snapshot or the user first.",
 		Annotations: mutating("Run G-code", true),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in gcodeInput) (*mcp.CallToolResult, any, error) {
 		if strings.TrimSpace(in.Gcode) == "" {

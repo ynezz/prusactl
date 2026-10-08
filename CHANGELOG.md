@@ -17,9 +17,21 @@
   the address and prusactl grabs a frame with ffmpeg. A PrusaLink that serves
   `/api/v1/cameras/snap` is used first, and Connect is still the fallback.
   `prusactl status` shows the saved camera. Only plain `rtsp://` addresses are
-  accepted (ffmpeg doesn't verify the certificate of `rtsps://`), and one with a
-  user or password is refused: ffmpeg would get it on its command line, readable
-  by any local user, and it would be stored in plain text. The Buddy3D takes none.
+  accepted (ffmpeg doesn't verify the certificate of `rtsps://`), and a password
+  in the address is masked wherever prusactl shows it.
+- `prusactl firmware` and the `get_firmware_status` and `update_firmware` tools,
+  through Prusa Connect only. Status shows the running and the latest firmware
+  and whether they differ. `update` has Connect copy its hosted `.bbf` to the
+  printer's USB drive, then sends `FLASH` to install it. While the printer is
+  printing `FLASH` is refused, so the file is left on the drive and the result
+  says so. Nothing happens when the printer already runs the latest.
+- The tool descriptions say plainly where an agent can hurt something:
+  `plate_clear` is the agent's own assertion and has to be backed by a camera
+  snapshot or the user's word, `run_gcode` writes `/usb/prusactl-macro.gcode`
+  and starts it as a print job, `api_request` is a raw escape hatch with no
+  safety checks, and deletes are permanent. Pausing is advised before stopping.
+  `skills/prusactl/SKILL.md` is a Claude Code skill with the status, start,
+  monitoring, and firmware workflows.
 - `prusactl login --manual` signs in without a password passing through the
   terminal, so an AI agent can run it. It prints the Prusa Account link on its
   own line, then reads the address the browser ends on

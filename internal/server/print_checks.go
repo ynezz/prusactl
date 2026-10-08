@@ -12,7 +12,7 @@ import (
 // Marking the printer ready (SET_PRINTER_READY, add_to_queue's set_ready) is
 // Prusa's own form of the same confirmation.
 type plateConfirmation struct {
-	PlateClear bool `json:"plate_clear,omitempty" jsonschema:"set only after confirming (camera or a person) that nothing is left on the plate; required when the printer is FINISHED or STOPPED, since the last print may still be there"`
+	PlateClear bool `json:"plate_clear,omitempty" jsonschema:"your own assertion that the plate is empty; nothing checks it, so make it true: look at get_camera_snapshot and read the image, or take the user's word. Required when the printer is FINISHED or STOPPED, since the last print may still be there. Never set it to get past the refusal"`
 }
 
 // plateCommands are firmware commands that start a job or move the head or

@@ -259,8 +259,10 @@ func (s *Server) addFileTools() {
 	})
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
-		Name:        "delete_printer_files",
-		Description: "Delete files from the printer's storage.",
+		Name: "delete_printer_files",
+		Description: "Delete files from the printer's storage. Permanent: there is no trash and no undo, and a file " +
+			"that is printing is refused. List the folder first and delete only what the user named or clearly " +
+			"asked to clean up.",
 		Annotations: mutating("Delete printer files", true),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in deleteFilesInput) (*mcp.CallToolResult, any, error) {
 		if len(in.Paths) == 0 {
@@ -301,7 +303,8 @@ func (s *Server) addFileTools() {
 			"network the file goes straight to the printer; through Connect it is stored in Connect and copied to the " +
 			"printer in the background (get_transfers shows progress); there then=print puts it first in the queue and " +
 			"marks the printer ready, and Connect starts it once the file arrives. then=print is refused unless the " +
-			"printer is idle. Before then=print, confirm the plate is clear. Uploading through Connect also leaves a " +
+			"printer is idle. Before then=print, confirm the plate is clear (a camera snapshot, or the user); plate_clear " +
+			"is your own assertion. Uploading through Connect also leaves a " +
 			"copy in the team's Connect storage, which delete_connect_files removes.",
 		Annotations: mutating("Upload print file", false),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in uploadInput) (*mcp.CallToolResult, any, error) {
@@ -405,7 +408,9 @@ func (s *Server) addFileTools() {
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "start_print",
 		Description: "Start printing a file that is already on the printer's storage. The printer must be idle " +
-			"and the plate clear: check get_printer (and the camera, if any) first.",
+			"and the plate clear: check get_printer and look at get_camera_snapshot first. After a finished or stopped " +
+			"print it needs plate_clear=true, which is your own assertion that the plate is empty, so verify it with the " +
+			"camera or the user before setting it.",
 		Annotations: mutating("Start print", false),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in startPrintInput) (*mcp.CallToolResult, any, error) {
 		t, err := s.route(ctx, in.printerRef)
@@ -464,7 +469,8 @@ func (s *Server) addFileTools() {
 		Description: "Add a file to the printer's Prusa Connect print queue, either one on the printer (path) or " +
 			"one in Connect storage (hash). Connect starts the next queued job when the printer is idle and marked " +
 			"ready (send_command SET_PRINTER_READY, or set_ready here). Marking it ready says the plate is clear, the " +
-			"same confirmation as plate_clear: do it only after checking the camera or asking the user.",
+			"same assertion as plate_clear, and nothing verifies it: do it only after looking at get_camera_snapshot or " +
+			"asking the user.",
 		Annotations: mutating("Queue print", false),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in queueInput) (*mcp.CallToolResult, any, error) {
 		if (in.Path == "") == (in.Hash == "") {
@@ -503,7 +509,7 @@ func (s *Server) addFileTools() {
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "remove_from_queue",
-		Description: "Remove a job from the printer's Prusa Connect print queue.",
+		Description: "Remove a job from the printer's Prusa Connect print queue. The queue entry is gone for good; add_to_queue puts it back at the end.",
 		Annotations: mutating("Remove queued job", true),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in queueJobInput) (*mcp.CallToolResult, any, error) {
 		p, err := s.connectPrinter(ctx, in.printerRef)
@@ -557,7 +563,8 @@ func (s *Server) addFileTools() {
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "delete_connect_files",
 		Description: "Delete files from Prusa Connect's cloud storage, freeing the team's quota. Takes the hashes " +
-			"list_connect_files and upload_file report. delete_printer_files is the equivalent for the printer's own storage.",
+			"list_connect_files and upload_file report. Permanent, with no undo, and it removes the file for the whole " +
+			"team. delete_printer_files is the equivalent for the printer's own storage.",
 		Annotations: mutating("Delete Connect files", true),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in deleteConnectFilesInput) (*mcp.CallToolResult, any, error) {
 		if len(in.Hashes) == 0 {

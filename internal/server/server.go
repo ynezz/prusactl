@@ -29,7 +29,9 @@ Two routes reach it. Direct: the printer's own API on the local network (PrusaLi
 
 Start with connection_status or get_printer. Printer arguments accept a name, serial number, or Connect UUID, and can be omitted with a single printer.
 
-Before anything physical (starting a print, moving axes, heating), check get_printer and, if there is a camera, get_camera_snapshot: the plate must be clear and nothing may be in the way. After a finished or stopped print, the tools that start a job or move toward the plate refuse until called with plate_clear=true; pass it only once you (or the user) have confirmed the plate is empty. Marking the printer ready is the same confirmation.
+Before anything physical (starting a print, moving axes, heating), check get_printer and, if there is a camera, get_camera_snapshot: the plate must be clear and nothing may be in the way. After a finished or stopped print, the tools that start a job or move toward the plate refuse until called with plate_clear=true. That flag is your own assertion and nothing verifies it: look at a fresh camera snapshot and read it, or ask the user, before you pass it; never pass it just to get past the refusal. Marking the printer ready (SET_PRINTER_READY, set_ready) is the same assertion.
+
+You are expected to act, not to ask permission for every step. Be careful where a step can't be undone: deletes (delete_printer_files, delete_connect_files, remove_from_queue) are permanent and there is no trash; control_print stop is final; run_gcode runs real G-code as a print job; api_request has no safety checks at all. When a print looks like it is failing, pause first (it can be resumed), tell the user, and stop only for a clear failure or on their word.
 
 Setup never happens through these tools. `
 

@@ -15,6 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/trevin-lee/prusactl/internal/auth"
+	"github.com/trevin-lee/prusactl/internal/camera"
 	"github.com/trevin-lee/prusactl/internal/connect"
 	"github.com/trevin-lee/prusactl/internal/link"
 	"github.com/trevin-lee/prusactl/internal/redact"
@@ -59,6 +60,11 @@ type Server struct {
 
 	mcp *mcp.Server
 
+	// The camera: its RTSP address (re-read on each use, like the direct
+	// route) and what grabs a frame from it.
+	cameraURL func() (string, error)
+	grabber   snapshotter
+
 	probeMu sync.Mutex
 	probed  time.Time
 	info    *linkInfo
@@ -68,7 +74,7 @@ type Server struct {
 // New builds the MCP server and registers every tool. lc may be nil, with
 // lcErr explaining why.
 func New(session *auth.Session, cc *connect.Client, lc *link.Client, lcErr error, version string) *Server {
-	s := &Server{session: session, connect: cc, link: lc, linkErr: lcErr, openLink: link.Open}
+	s := &Server{session: session, connect: cc, link: lc, linkErr: lcErr, openLink: link.Open, cameraURL: link.LoadCamera, grabber: camera.Grabber{}}
 	s.mcp = mcp.NewServer(
 		&mcp.Implementation{Name: "prusactl", Title: "Prusa printer", Version: version},
 		&mcp.ServerOptions{Instructions: instructionsFor()},

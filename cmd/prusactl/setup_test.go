@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/trevin-lee/prusactl/internal/appdir/appdirtest"
+	"github.com/trevin-lee/prusactl/internal/link"
 )
 
 // standIn answers the PrusaLink info endpoint like a printer would.
@@ -84,4 +85,76 @@ func contains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// The camera is saved beside the printer, not instead of it: re-running setup
+// keeps the camera, --camera alone keeps the printer, and PRUSACTL_CAMERA_URL
+// wins over what was saved.
+func TestSetupSavesTheCameraBesideThePrinter(t *testing.T) {
+	home := appdirtest.Use(t)
+	t.Setenv("PRUSACTL_KEYRING", "file")
+	t.Setenv("PRUSACTL_CONFIG", filepath.Join(home, "config.json"))
+	srv := standIn(t)
+
+	// Only the camera: no printer address, no password asked.
+	if err := setup(context.Background(), []string{"--camera", "rtsp://127.0.0.1:1/live"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := link.LoadCamera(); got != "rtsp://127.0.0.1:1/live" {
+		t.Fatalf("saved camera %q", got)
+	}
+	if _, err := link.SavedConfig(); err == nil {
+		t.Fatal("saving only the camera set up a printer")
+	}
+
+	runSetup(t, "pw", srv.URL)
+	if got, _ := link.LoadCamera(); got != "rtsp://127.0.0.1:1/live" {
+		t.Errorf("setup dropped the camera: %q", got)
+	}
+	if cfg, err := link.SavedConfig(); err != nil || cfg.Host != srv.URL {
+		t.Errorf("printer %v, %v", cfg, err)
+	}
+
+	t.Setenv("PRUSACTL_CAMERA_URL", "rtsp://127.0.0.1:2/live")
+	if got, _ := link.LoadCamera(); got != "rtsp://127.0.0.1:2/live" {
+		t.Errorf("the environment should win: %q", got)
+	}
+	t.Setenv("PRUSACTL_CAMERA_URL", "")
+
+	if err := setup(context.Background(), []string{"--no-camera"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := link.LoadCamera(); got != "" {
+		t.Errorf("--no-camera left %q", got)
+	}
+	if _, err := link.SavedConfig(); err != nil {
+		t.Errorf("--no-camera forgot the printer: %v", err)
+	}
+
+	for _, bad := range [][]string{{"--camera", "http://x/live"}, {"--camera", "x", "--no-camera"}, {"--no-camera", srv.URL}} {
+		if err := setup(context.Background(), bad); err == nil {
+			t.Errorf("setup %v should be refused", bad)
+		}
+	}
+}
+
+// --forget with no printer set up still removes a camera saved on its own.
+func TestSetupForgetRemovesACameraSavedAlone(t *testing.T) {
+	home := appdirtest.Use(t)
+	t.Setenv("PRUSACTL_KEYRING", "file")
+	cfgPath := filepath.Join(home, "config.json")
+	t.Setenv("PRUSACTL_CONFIG", cfgPath)
+
+	if err := setup(context.Background(), []string{"--camera", "rtsp://cam:pw@127.0.0.1:1/live"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := setup(context.Background(), []string{"--forget"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := link.LoadCamera(); got != "" {
+		t.Errorf("--forget left the camera %q", got)
+	}
+	if _, err := os.Stat(cfgPath); !os.IsNotExist(err) {
+		t.Errorf("config file should be gone: %v", err)
+	}
 }

@@ -60,3 +60,26 @@ func TestTextCoversTruncatedAndEmbeddedJSON(t *testing.T) {
 		t.Errorf("clean text changed: %s", Text(clean))
 	}
 }
+
+// A camera address can carry a password; the host and path stay readable. The
+// exact output is compared, since a pattern that stops at the first @ leaves
+// the tail of the password behind and still hides "hunter2" as a whole word.
+func TestTextMasksCameraPassword(t *testing.T) {
+	for in, want := range map[string]string{
+		"couldn't open rtsp://cam:hunter2@192.168.1.5/live: refused":       "couldn't open rtsp://[redacted]@192.168.1.5/live: refused",
+		"couldn't open rtsp://cam:hun@ter2@192.168.1.5/live: refused":      "couldn't open rtsp://[redacted]@192.168.1.5/live: refused",
+		"bad rtsp://cam:pa\nss@192.168.1.5/live":                           "bad rtsp://[redacted]@192.168.1.5/live",
+		"bad rtsp://cam:pa\r\nss@192.168.1.5/live":                         "bad rtsp://[redacted]@192.168.1.5/live",
+		"bad rtsp://cam:my secret@192.168.1.5/live":                        "bad rtsp://[redacted]@192.168.1.5/live",
+		`{"url":"rtsp://cam:hunter2@192.168.1.5/live","token":"x"}`:        `{"token":"[redacted]","url":"rtsp://[redacted]@192.168.1.5/live"}`,
+		`{"url":"rtsp://cam:hun@ter2@192.168.1.5/live","e":"a@b.example"}`: `{"url":"rtsp://[redacted]@192.168.1.5/live","e":"a@b.example"}`,
+		`{"url":"rtsp://cam:pa\"ss@192.168.1.5/live"}`:                     `{"url":"rtsp://[redacted]@192.168.1.5/live"}`,
+	} {
+		if got := Text(in); got != want {
+			t.Errorf("Text(%q)\n got %q\nwant %q", in, got, want)
+		}
+	}
+	if got := Text("rtsp://192.168.1.5/live"); got != "rtsp://192.168.1.5/live" {
+		t.Errorf("an address without a password changed: %q", got)
+	}
+}

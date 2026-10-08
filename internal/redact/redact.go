@@ -19,6 +19,13 @@ var key = regexp.MustCompile(`(?i)api_?key|token|password|secret`)
 // truncated response: group 1 is the name and colon, group 2 the value.
 var pair = regexp.MustCompile(`(?i)("[^"]*(?:api_?key|token|password|secret)[^"]*"\s*:\s*)("(?:[^"\\]|\\.)*"?|[^,}\]\s]+)`)
 
+// rtspUser finds the user:password in a camera address such as
+// rtsp://user:password@192.168.1.5/live. The password may hold an @, so the
+// userinfo runs to the last @ before the path, and it may hold spaces, a line break or a
+// JSON-escaped quote, which is how a malformed address that url.Parse refuses
+// shows up in an error.
+var rtspUser = regexp.MustCompile(`(?is)(rtsps?://)(?:[^/"\\]|\\.)+@`)
+
 // Value masks credential fields in a decoded JSON value, in place, and
 // returns it.
 func Value(v any) any {
@@ -67,8 +74,9 @@ func JSON(raw []byte) ([]byte, bool) {
 // error message.
 func Text(s string) string {
 	if out, changed := JSON([]byte(s)); changed {
-		return string(out)
+		return rtspUser.ReplaceAllString(string(out), "${1}"+Mask+"@")
 	}
+	s = rtspUser.ReplaceAllString(s, "${1}"+Mask+"@")
 	if json.Valid([]byte(s)) {
 		return s
 	}

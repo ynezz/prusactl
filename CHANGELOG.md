@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **The camera works without Prusa Connect.** The Buddy3D camera is a separate
+  Wi-Fi device that talks to Connect itself and serves RTSP at
+  `rtsp://<camera-ip>/live`; Buddy firmware's PrusaLink has no camera endpoint,
+  which is why `get_camera_snapshot` and `prusactl camera` used to need
+  Connect. `prusactl setup --camera rtsp://...` (or `PRUSACTL_CAMERA_URL`) saves
+  the address and prusactl grabs a frame with ffmpeg. A PrusaLink that serves
+  `/api/v1/cameras/snap` is used first, and Connect is still the fallback.
+  `prusactl status` shows the saved camera. Only plain `rtsp://` addresses are
+  accepted (ffmpeg doesn't verify the certificate of `rtsps://`), and a password
+  in the address is masked wherever prusactl shows it.
 - `prusactl login --manual` signs in without a password passing through the
   terminal, so an AI agent can run it. It prints the Prusa Account link on its
   own line, then reads the address the browser ends on

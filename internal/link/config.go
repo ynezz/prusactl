@@ -35,6 +35,66 @@ type Config struct {
 
 type fileFormat struct {
 	Printer *Config `json:"printer,omitempty"`
+	// Camera is the RTSP address of the printer's camera, e.g.
+	// rtsp://192.168.8.60/live. It is a separate device, so it is saved apart
+	// from the printer.
+	Camera string `json:"camera,omitempty"`
+}
+
+// readFile reads the config file; a missing one is empty.
+func readFile() (fileFormat, string, error) {
+	var f fileFormat
+	path, err := configPath()
+	if err != nil {
+		return f, "", err
+	}
+	b, err := os.ReadFile(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return f, path, nil
+	case err != nil:
+		return f, path, err
+	}
+	if err := json.Unmarshal(b, &f); err != nil {
+		return f, path, fmt.Errorf("reading %s: %w", path, err)
+	}
+	return f, path, nil
+}
+
+func writeFile(path string, f fileFormat) error {
+	b, err := json.MarshalIndent(f, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(b, '\n'), 0o600)
+}
+
+// LoadCamera returns the camera's RTSP address: PRUSACTL_CAMERA_URL if set,
+// else the one saved by `prusactl setup --camera`, else "".
+func LoadCamera() (string, error) {
+	if v := env("PRUSACTL_CAMERA_URL"); v != "" {
+		return v, nil
+	}
+	f, _, err := readFile()
+	return f.Camera, err
+}
+
+// SaveCamera saves the camera's address, or forgets it when addr is empty,
+// leaving the saved printer alone.
+func SaveCamera(addr string) error {
+	f, path, err := readFile()
+	if err != nil {
+		return err
+	}
+	f.Camera = addr
+	if f.Printer == nil && addr == "" {
+		// Nothing left to keep.
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	return writeFile(path, f)
 }
 
 // NormalizeHost turns "192.168.8.162" or "prusa.local:8080" into an origin.
@@ -77,24 +137,13 @@ func configPath() (string, error) {
 // LoadConfig reads the saved printer, applying PRUSACTL_HOST / PRUSACTL_USER /
 // PRUSACTL_AUTH overrides. It returns ErrNotConfigured if there is none.
 func LoadConfig() (Config, error) {
-	var cfg Config
-	path, err := configPath()
+	f, _, err := readFile()
 	if err != nil {
-		return cfg, err
+		return Config{}, err
 	}
-	b, err := os.ReadFile(path)
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
-	case err != nil:
-		return cfg, err
-	default:
-		var f fileFormat
-		if err := json.Unmarshal(b, &f); err != nil {
-			return cfg, fmt.Errorf("reading %s: %w", path, err)
-		}
-		if f.Printer != nil {
-			cfg = *f.Printer
-		}
+	var cfg Config
+	if f.Printer != nil {
+		cfg = *f.Printer
 	}
 	if v := env("PRUSACTL_HOST"); v != "" {
 		cfg.Host = v
@@ -122,34 +171,22 @@ func LoadConfig() (Config, error) {
 
 // SaveConfig writes the printer address (never the secret).
 func SaveConfig(cfg Config) error {
-	path, err := configPath()
-	if err != nil {
+	f, path, err := readFile()
+	if path == "" {
 		return err
 	}
-	b, err := json.MarshalIndent(fileFormat{Printer: &cfg}, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, append(b, '\n'), 0o600)
+	// An unreadable file is replaced, as before; a readable one keeps the
+	// camera saved beside the printer.
+	f.Printer = &cfg
+	return writeFile(path, f)
 }
 
 // SavedConfig returns the printer saved by `prusactl setup`, ignoring the
 // PRUSACTL_* overrides, or ErrNotConfigured.
 func SavedConfig() (Config, error) {
-	path, err := configPath()
+	f, _, err := readFile()
 	if err != nil {
 		return Config{}, err
-	}
-	b, err := os.ReadFile(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return Config{}, ErrNotConfigured
-	}
-	if err != nil {
-		return Config{}, err
-	}
-	var f fileFormat
-	if err := json.Unmarshal(b, &f); err != nil {
-		return Config{}, fmt.Errorf("reading %s: %w", path, err)
 	}
 	if f.Printer == nil || f.Printer.Host == "" {
 		return Config{}, ErrNotConfigured

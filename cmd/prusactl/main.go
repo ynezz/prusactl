@@ -13,6 +13,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -26,6 +27,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/trevin-lee/prusactl/internal/auth"
+	"github.com/trevin-lee/prusactl/internal/camera"
 	"github.com/trevin-lee/prusactl/internal/compat"
 	"github.com/trevin-lee/prusactl/internal/connect"
 	"github.com/trevin-lee/prusactl/internal/link"
@@ -211,10 +213,47 @@ func setup(ctx context.Context, args []string) error {
 		return errors.New("setup: usage: prusactl setup [flags] [ADDRESS] (see `prusactl help setup`)")
 	}
 	user, apiKey, fromStdin := opts.str("user"), opts.on("api-key"), opts.on("password-stdin")
+	cameraURL := opts.str("camera")
+	if cameraURL != "" {
+		var err error
+		if cameraURL, err = camera.Validate(cameraURL); err != nil {
+			return err
+		}
+	}
+	if opts.on("no-camera") {
+		if cameraURL != "" || opts.on("forget") || len(pos) > 0 {
+			return errors.New("setup: --no-camera stands alone; it forgets the camera and changes nothing else")
+		}
+		if err := link.SaveCamera(""); err != nil {
+			return err
+		}
+		fmt.Println("Forgot the saved camera address.")
+		return nil
+	}
+	if cameraURL != "" && len(pos) == 0 && !opts.on("forget") {
+		// Only the camera: leave the printer, and its password, alone.
+		if err := link.SaveCamera(cameraURL); err != nil {
+			return err
+		}
+		reportCamera(cameraURL)
+		return nil
+	}
 	if opts.on("forget") {
 		cfg, err := link.SavedConfig() // what setup saved, not PRUSACTL_* overrides
 		if errors.Is(err, link.ErrNotConfigured) {
-			fmt.Println("No printer is set up.")
+			// A camera saved on its own, with its credentials, goes too.
+			saved, cerr := link.LoadCamera()
+			if cerr != nil {
+				return cerr
+			}
+			if err := link.SaveCamera(""); err != nil {
+				return err
+			}
+			if saved != "" && os.Getenv("PRUSACTL_CAMERA_URL") == "" {
+				fmt.Println("No printer is set up; forgot the saved camera address.")
+			} else {
+				fmt.Println("No printer is set up.")
+			}
 			return nil
 		}
 		if err != nil {
@@ -299,7 +338,34 @@ func setup(ctx context.Context, args []string) error {
 	if prevErr == nil && prev.Host != cfg.Host {
 		fmt.Printf("This replaces %s: prusactl reaches one printer directly (others work through Prusa Connect).\n", prev.Host)
 	}
+	if cameraURL != "" {
+		if err := link.SaveCamera(cameraURL); err != nil {
+			return err
+		}
+		reportCamera(cameraURL)
+	}
 	return nil
+}
+
+// reportCamera confirms a saved camera address, and warns about what would
+// stop it working: ffmpeg missing, or nothing listening at the address.
+func reportCamera(addr string) {
+	fmt.Printf("Saved the camera at %s.\n", camera.Mask(addr))
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		fmt.Fprintln(os.Stderr, "warning: ffmpeg isn't on PATH; it grabs the pictures, so install it before using the camera")
+	}
+	if u, err := url.Parse(addr); err == nil {
+		port := u.Port()
+		if port == "" {
+			port = "554"
+		}
+		c, err := net.DialTimeout("tcp", net.JoinHostPort(u.Hostname(), port), 3*time.Second)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: nothing answered at %s:%s: %v\n", u.Hostname(), port, err)
+			return
+		}
+		c.Close()
+	}
 }
 
 // terminalPrompter asks for Prusa Account details on the terminal. host is
@@ -410,6 +476,10 @@ func status(ctx context.Context, srv *server.Server, lc *link.Client) error {
 		fmt.Printf("Prusa Connect:     %s\n", who)
 	} else {
 		fmt.Printf("Prusa Connect:     not signed in (%v)\n", orText(cloud["error"], cloud["setup"]))
+	}
+
+	if cam, _ := st["camera"].(map[string]any); cam["configured"] == true {
+		fmt.Printf("Camera (RTSP):     %v\n", cam["rtsp"])
 	}
 
 	// Without the direct route, show the printers as Prusa Connect sees them.

@@ -16,7 +16,8 @@
 
 `prusactl mcp` gives an agent such as Claude hands on your printer. It can:
 
-- **Watch:** check state, temperatures, job progress, and (with Connect) the camera.
+- **Watch:** check state, temperatures, job progress, and the camera (over RTSP with
+  `setup --camera`, or through Connect).
 - **Print:** upload files, start them, pause, resume, and stop, and (with Connect)
   queue them.
 - **Control:** heat, home, move, load and unload filament, and level the bed:
@@ -41,8 +42,9 @@ It is one Go binary; no browser is needed. Setup is two terminal prompts.
 >
 > What did I print this week, and how many failed?
 
-The camera, cancelling one object, reading a dialog, and print history go
-through Prusa Connect, so those need `prusactl login`; the rest works directly.
+Cancelling one object, reading a dialog, and print history go through Prusa
+Connect, so those need `prusactl login`; the rest works directly. So does the
+camera, once you tell prusactl where it is (see [The camera](#the-camera)).
 
 ## Install
 
@@ -103,6 +105,7 @@ Linux, `%AppData%` on Windows); delete it too if you like.
 prusactl setup 192.168.1.50    # the printer's address; asks for its PrusaLink password
 prusactl status
 
+prusactl setup --camera rtsp://192.168.1.60/live   # optional: the camera, no Connect needed
 prusactl login                 # optional: Prusa Connect, for remote access, camera, dialogs
 ```
 
@@ -166,12 +169,42 @@ prusactl reaches the printer two ways, and each tool picks one:
 | Status, files, upload, print, pause/resume/stop | ✅ | ✅ |
 | Heat, move, filament, leveling | ✅ via `run_gcode` (printer idle) | ✅ via firmware commands |
 | Any G-code | ✅ | ❌ |
-| Camera, on-screen dialogs, queue, history, events | ❌ | ✅ |
+| Camera | ✅ via RTSP and ffmpeg, once its address is saved | ✅ |
+| On-screen dialogs, queue, history, events | ❌ | ✅ |
 
 The direct route is used whenever the printer answers. Otherwise, or for
 Connect-only features, the tool goes through Connect. Results from tools that
 can take either route say which one they used (`via`); the rest always use the
 route their feature needs.
+
+### The camera
+
+The Buddy3D camera is not part of the printer. It is a separate Wi-Fi device that
+talks to Prusa Connect on its own and serves a video stream at
+`rtsp://<camera-ip>/live`; the printer's PrusaLink has no camera endpoint (Buddy
+firmware serves none), so a direct connection alone can't show it. Tell prusactl
+where the camera is and it grabs one frame at a time with
+[ffmpeg](https://ffmpeg.org), which must be on your `PATH`:
+
+```sh
+prusactl setup --camera rtsp://192.168.1.60/live   # find the camera's IP in your router
+prusactl camera snapshot.jpg
+```
+
+A snapshot comes from the first source that works: the printer's own
+`/api/v1/cameras/snap`, if its PrusaLink has one (other PrusaLink builds do);
+the saved RTSP address; then Prusa Connect. `via: "direct"` limits it to the
+first two, `via: "connect"` to Connect. `PRUSACTL_CAMERA_URL` overrides the saved
+address, and a password in the address is masked wherever prusactl shows it.
+
+Only plain `rtsp://` addresses are accepted. `rtsps://` is refused on purpose:
+FFmpeg 7.1.5 completes the TLS handshake with a self-signed certificate and sends
+the camera's credentials even with `-tls_verify 1` and `-ca_file`, because its RTSP
+code never hands those options to the TLS layer. The Buddy3D camera serves plain
+RTSP, so this costs nothing there. Residual risk: plain RTSP sends the password
+(and the video) unencrypted, so anyone on your network can read it; use a camera
+account that only has access to the picture, and keep the camera off untrusted
+networks.
 
 ### Signing in to Prusa Connect
 
@@ -219,7 +252,7 @@ The printer's PrusaLink password is kept in the same keychain.
 | `control_print` | both | Pause, resume, or stop |
 | `get_transfers` | both | File transfers in progress |
 | `run_gcode` | direct | Run G-code, such as heating, homing, moving, or filament changes, while the printer is idle |
-| `get_camera_snapshot` | Connect | Latest camera image, with how old it is |
+| `get_camera_snapshot` | both | A camera image: from the camera's RTSP stream if its address is saved, else Connect's latest, with how old it is |
 | `respond_to_dialog` | Connect | Press a button on the printer's screen |
 | `list_supported_commands`, `send_command`, `get_command` | Connect | Every firmware command Connect exposes, with arguments and allowed states |
 | `get_queue`, `add_to_queue`, `remove_from_queue` | Connect | The print queue |
@@ -254,7 +287,7 @@ prusactl jobs [JOB-ID]             print history, or one job
 prusactl events                    the printer's recent events
 prusactl telemetry                 recorded temperatures and speeds
 prusactl transfers                 file transfers in progress
-prusactl camera [FILE]             save a snapshot from the printer's camera
+prusactl camera [FILE]             save a snapshot from the printer's camera (RTSP or Connect)
 prusactl cmd ls|send|status        run a firmware command through Prusa Connect
 
 prusactl api [METHOD] PATH [JSON]  /api/... to the printer, /app/... to Prusa Connect
@@ -279,9 +312,10 @@ flags, and flags work before or after the arguments. Tab completion covers
 commands, flags, and their values: Homebrew installs it for bash, zsh, and fish,
 and `prusactl help completion` shows how to add it otherwise.
 
-`prusactl setup --forget` removes the saved printer. `--api-key` uses a PrusaLink
-API key instead of the password, and `--password-stdin` reads the secret from a
-pipe.
+`prusactl setup --forget` removes the saved printer and camera. `--api-key` uses
+a PrusaLink API key instead of the password, `--password-stdin` reads the secret
+from a pipe, and `--camera URL` saves the camera's RTSP address (on its own it
+leaves the printer alone; `--no-camera` forgets just the camera).
 
 `prusactl api` masks API keys and tokens in responses (Connect's printer record
 carries the PrusaLink and Connect keys), so its output is safe to paste or hand
@@ -317,6 +351,7 @@ to an agent. `--raw` shows them.
 | `PRUSACTL_HOST`, `PRUSACTL_USER`, `PRUSACTL_AUTH` | Override the saved printer address, username, or `digest`/`api-key` |
 | `PRUSACTL_PASSWORD`, `PRUSACTL_API_KEY` | Supply the printer secret instead of the keychain |
 | `PRUSACTL_KEYRING=file` | Keep credentials in `secrets.json` (mode 0600) instead of the OS keychain |
+| `PRUSACTL_CAMERA_URL` | Override the saved camera's RTSP address, e.g. `rtsp://192.168.1.60/live` |
 | `PRUSACTL_CONFIG` | Alternate config file (default: `prusactl/config.json` in the OS config dir) |
 | `PRUSA_CONNECT_URL`, `PRUSA_ACCOUNT_URL` | Connect and Prusa Account origins |
 | `PRUSA_CLIENT_ID`, `PRUSA_REDIRECT_URI` | The OAuth client (default: the Connect web app's) |

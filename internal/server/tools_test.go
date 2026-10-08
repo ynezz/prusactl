@@ -86,6 +86,13 @@ func (f *fakePrinter) called(prefix string) bool {
 // returns a client session to call its tools with.
 func connectTools(t *testing.T, fp *fakePrinter) *mcp.ClientSession {
 	t.Helper()
+	return connectToolsWith(t, fp, nil)
+}
+
+// connectToolsWith is connectTools with a chance to adjust the server before
+// it starts, e.g. to give it a camera.
+func connectToolsWith(t *testing.T, fp *fakePrinter, tweak func(*Server)) *mcp.ClientSession {
+	t.Helper()
 	srv := httptest.NewServer(fp)
 	t.Cleanup(srv.Close)
 	lc := link.New(link.Config{Host: srv.URL, Auth: link.AuthAPIKey}, "k")
@@ -93,6 +100,11 @@ func connectTools(t *testing.T, fp *fakePrinter) *mcp.ClientSession {
 	s := New(session, connect.New(session, "test"), lc, nil, "test")
 	// Never read the real saved setup, which would point at a real printer.
 	s.openLink = func() (*link.Client, error) { return lc, nil }
+	// Nor the saved camera.
+	s.cameraURL = func() (string, error) { return "", nil }
+	if tweak != nil {
+		tweak(s)
+	}
 
 	ct, st := mcp.NewInMemoryTransports()
 	ctx := context.Background()
@@ -247,7 +259,7 @@ func TestViaIsRefusedWhenImpossible(t *testing.T) {
 			// Absolute means something different on Windows, and the path is
 			// checked before the route is.
 			args: map[string]any{"path": "/usb/x.bgcode", "local_path": filepath.Join(t.TempDir(), "x.bgcode")}},
-		{tool: "get_camera_snapshot", via: "direct", want: "only works through Prusa Connect"},
+		{tool: "get_camera_snapshot", via: "direct", want: "no local camera"},
 		{tool: "get_queue", via: "direct", want: "only works through Prusa Connect"},
 		{tool: "respond_to_dialog", via: "direct", want: "only works through Prusa Connect", args: map[string]any{"button": "Yes"}},
 		{tool: "get_printer", via: "bogus", want: "via must be direct or connect"},

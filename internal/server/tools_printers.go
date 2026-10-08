@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -154,80 +153,17 @@ func (s *Server) addPrinterTools() {
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "get_camera_snapshot",
-		Description: "The latest image from the printer's camera (via Prusa Connect), so you can see the print, " +
-			"the bed, and the nozzle. Use it before starting a print or moving anything (is the plate clear?) and " +
-			"to watch a print for failures. Reports how old the image is.",
+		Description: "The latest image from the printer's camera, so you can see the print, the bed, and the nozzle. " +
+			"Use it before starting a print or moving anything (is the plate clear?) and to watch a print for " +
+			"failures. " +
+			"Where the picture comes from: the printer's own camera API if it has one; else " +
+			"the camera's RTSP stream, if its address is saved (prusactl setup --camera rtsp://<camera-ip>/live, or " +
+			"PRUSACTL_CAMERA_URL), grabbed with ffmpeg, which must be installed; else Prusa Connect. via=direct " +
+			"forces the first two, via=connect forces Connect. Reports where the image came from and how old it is.",
 		Annotations: readOnly("Camera snapshot"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in snapshotInput) (*mcp.CallToolResult, any, error) {
-		p, err := s.connectPrinter(ctx, in.printerRef)
-		if err != nil {
-			return nil, nil, err
-		}
-		var cams struct {
-			Cameras *[]map[string]any `json:"cameras"`
-		}
-		if err := s.connect.Get(ctx, printerPath(p.UUID, "cameras"), nil, &cams); err != nil {
-			return nil, nil, err
-		}
-		if cams.Cameras == nil {
-			return nil, nil, connect.Missing("GET", printerPath(p.UUID, "cameras"), "cameras")
-		}
-		if len(*cams.Cameras) == 0 {
-			return nil, nil, fmt.Errorf("%s has no camera in Prusa Connect", p.Name)
-		}
-		cam := (*cams.Cameras)[0]
-		if in.CameraID != "" {
-			cam = nil
-			for _, c := range *cams.Cameras {
-				if fmt.Sprint(c["id"]) == in.CameraID || fmt.Sprint(c["name"]) == in.CameraID {
-					cam = c
-				}
-			}
-			if cam == nil {
-				return nil, nil, fmt.Errorf("no camera %q on %s", in.CameraID, p.Name)
-			}
-		}
-		// Since Prusa moved cameras to its camera service (2026-09), snapshots
-		// come from the URL Connect's GraphQL API gives for the camera, found
-		// by its token. The older endpoints stay as a fallback.
-		var resp *http.Response
-		if token, _ := cam["token"].(string); token != "" {
-			if urls, err := s.connect.SnapshotURLs(ctx, p.UUID); err == nil && urls[token] != "" {
-				if r, err := s.connect.Do(ctx, connect.Request{Method: http.MethodGet, Path: urls[token]}); err == nil {
-					resp = r
-				}
-			}
-		}
-		if resp == nil {
-			id := connect.PathEscape(jsonID(cam["id"]))
-			query := url.Values{"printer_uuid": {p.UUID}}
-			resp, err = s.connect.Do(ctx, connect.Request{Method: http.MethodGet, Path: "/app/cameras/" + id + "/snapshots/last", Query: query})
-			if connect.IsStatus(err, http.StatusNotFound) {
-				// WebRTC cameras (Buddy3D) may never have pushed a full snapshot;
-				// the web app falls back to the thumbnail endpoint.
-				resp, err = s.connect.Do(ctx, connect.Request{Method: http.MethodGet, Path: "/thumbnail/camera/" + id, Query: query})
-			}
-			if err != nil {
-				return nil, nil, err
-			}
-		}
-		defer resp.Body.Close()
-		img, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
-		if err != nil {
-			return nil, nil, err
-		}
-		mime := resp.Header.Get("Content-Type")
-		if mime == "" || mime == "application/octet-stream" {
-			mime = http.DetectContentType(img)
-		}
-		note := fmt.Sprintf("Camera %q on %s.", fmt.Sprint(cam["name"]), p.Name)
-		if lm, err := http.ParseTime(resp.Header.Get("Last-Modified")); err == nil {
-			note += fmt.Sprintf(" Taken %s (%s ago).", lm.Local().Format(time.DateTime), time.Since(lm).Round(time.Second))
-		}
-		return &mcp.CallToolResult{Content: []mcp.Content{
-			&mcp.TextContent{Text: note},
-			&mcp.ImageContent{Data: img, MIMEType: mime},
-		}}, nil, nil
+		res, err := s.cameraSnapshot(ctx, in)
+		return res, nil, err
 	})
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
@@ -335,4 +271,70 @@ func jsonID(v any) string {
 		return strconv.FormatFloat(f, 'f', -1, 64)
 	}
 	return fmt.Sprint(v)
+}
+
+// connectSnapshot fetches the camera's last picture from Prusa Connect.
+func (s *Server) connectSnapshot(ctx context.Context, in snapshotInput) (*mcp.CallToolResult, error) {
+	p, err := s.connectPrinter(ctx, in.printerRef)
+	if err != nil {
+		return nil, err
+	}
+	var cams struct {
+		Cameras *[]map[string]any `json:"cameras"`
+	}
+	if err := s.connect.Get(ctx, printerPath(p.UUID, "cameras"), nil, &cams); err != nil {
+		return nil, err
+	}
+	if cams.Cameras == nil {
+		return nil, connect.Missing("GET", printerPath(p.UUID, "cameras"), "cameras")
+	}
+	if len(*cams.Cameras) == 0 {
+		return nil, fmt.Errorf("%s has no camera in Prusa Connect", p.Name)
+	}
+	cam := (*cams.Cameras)[0]
+	if in.CameraID != "" {
+		cam = nil
+		for _, c := range *cams.Cameras {
+			if fmt.Sprint(c["id"]) == in.CameraID || fmt.Sprint(c["name"]) == in.CameraID {
+				cam = c
+			}
+		}
+		if cam == nil {
+			return nil, fmt.Errorf("no camera %q on %s", in.CameraID, p.Name)
+		}
+	}
+	// Since Prusa moved cameras to its camera service (2026-09), snapshots
+	// come from the URL Connect's GraphQL API gives for the camera, found
+	// by its token. The older endpoints stay as a fallback.
+	var resp *http.Response
+	if token, _ := cam["token"].(string); token != "" {
+		if urls, err := s.connect.SnapshotURLs(ctx, p.UUID); err == nil && urls[token] != "" {
+			if r, err := s.connect.Do(ctx, connect.Request{Method: http.MethodGet, Path: urls[token]}); err == nil {
+				resp = r
+			}
+		}
+	}
+	if resp == nil {
+		id := connect.PathEscape(jsonID(cam["id"]))
+		query := url.Values{"printer_uuid": {p.UUID}}
+		resp, err = s.connect.Do(ctx, connect.Request{Method: http.MethodGet, Path: "/app/cameras/" + id + "/snapshots/last", Query: query})
+		if connect.IsStatus(err, http.StatusNotFound) {
+			// WebRTC cameras (Buddy3D) may never have pushed a full snapshot;
+			// the web app falls back to the thumbnail endpoint.
+			resp, err = s.connect.Do(ctx, connect.Request{Method: http.MethodGet, Path: "/thumbnail/camera/" + id, Query: query})
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	defer resp.Body.Close()
+	img, mime, err := readImage(resp)
+	if err != nil {
+		return nil, err
+	}
+	note := fmt.Sprintf("Camera %q on %s.", fmt.Sprint(cam["name"]), p.Name)
+	if lm, err := http.ParseTime(resp.Header.Get("Last-Modified")); err == nil {
+		note += fmt.Sprintf(" Taken %s (%s ago).", lm.Local().Format(time.DateTime), time.Since(lm).Round(time.Second))
+	}
+	return imageResult(img, mime, note), nil
 }

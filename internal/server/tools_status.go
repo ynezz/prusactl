@@ -8,6 +8,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/trevin-lee/prusactl/internal/auth"
+	"github.com/trevin-lee/prusactl/internal/camera"
 	"github.com/trevin-lee/prusactl/internal/link"
 
 	"github.com/trevin-lee/prusactl/internal/hint"
@@ -45,7 +46,13 @@ func (s *Server) Status(ctx context.Context) map[string]any {
 	if cloud["signed_in"] != true {
 		cloud["setup"] = "optional, for remote access, camera, dialogs, queue and history: " + hint.Connect()
 	}
-	return map[string]any{"direct": direct, "connect": cloud}
+	cam := map[string]any{"configured": false}
+	if s.cameraURL != nil {
+		if addr, err := s.cameraURL(); err == nil && addr != "" {
+			cam["configured"], cam["rtsp"] = true, camera.Mask(addr)
+		}
+	}
+	return map[string]any{"direct": direct, "connect": cloud, "camera": cam}
 }
 
 // ConnectPrinters returns the account's printers as Prusa Connect lists them
@@ -69,7 +76,8 @@ func (s *Server) addStatusTools() {
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "connection_status",
 		Description: "How the printer can be reached right now: directly on the local network (PrusaLink) " +
-			"and/or through Prusa Connect, and which account is signed in. Says what to set up if neither works.",
+			"and/or through Prusa Connect, which account is signed in, and whether a local camera (RTSP) is saved. " +
+			"Says what to set up if neither route works.",
 		Annotations: readOnly("Connection status"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
 		return jsonResult(s.Status(ctx))

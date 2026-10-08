@@ -136,7 +136,7 @@ func (f *fakeConnect) sentCommands() []string {
 	return append([]string(nil), f.sent...)
 }
 
-func connectConnectTools(t *testing.T, fc *fakeConnect) *mcp.ClientSession {
+func connectConnectTools(t *testing.T, fc http.Handler, tweaks ...func(*Server)) *mcp.ClientSession {
 	t.Helper()
 	appdirtest.Use(t) // the refresh lock file lives under the config dir
 	srv := httptest.NewServer(fc)
@@ -145,9 +145,16 @@ func connectConnectTools(t *testing.T, fc *fakeConnect) *mcp.ClientSession {
 	cc := connect.New(session, "test")
 	cc.BaseURL = srv.URL
 	cc.GraphQLURL = srv.URL + "/graphql"
-	fc.base = srv.URL
+	// The camera-service fake needs its own base URL; other handlers don't.
+	if f, ok := fc.(*fakeConnect); ok {
+		f.base = srv.URL
+	}
 	s := New(session, cc, nil, link.ErrNotConfigured, "test")
 	s.openLink = func() (*link.Client, error) { return nil, link.ErrNotConfigured }
+	s.cameraURL = func() (string, error) { return "", nil }
+	for _, tweak := range tweaks {
+		tweak(s)
+	}
 
 	ct, st := mcp.NewInMemoryTransports()
 	ctx := context.Background()

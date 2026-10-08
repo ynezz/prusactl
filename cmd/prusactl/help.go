@@ -50,12 +50,19 @@ var commands = []*command{
 password (or API key) in your keychain, or in a private file on machines
 without one. ADDRESS is its IP address or hostname, e.g. 192.168.1.50; you're
 asked for it if you leave it out. The password is on the printer under
-Settings > Network > PrusaLink.`,
+Settings > Network > PrusaLink.
+
+--camera saves the address of the printer's camera (rtsp://<camera-ip>/live), so
+the camera works without Prusa Connect. Frames are grabbed with ffmpeg, which
+must be installed. Only plain rtsp:// is accepted. On its own, without an
+ADDRESS, --camera only saves the camera and leaves the printer setup alone.`,
 		Flags: []flagSpec{
 			{Name: "user", Value: "NAME", Default: "maker", Usage: "PrusaLink username"},
 			{Name: "api-key", Usage: "use a PrusaLink API key instead of the password"},
 			{Name: "password-stdin", Usage: "read the password or API key from stdin"},
-			{Name: "forget", Usage: "remove the saved printer and its password"},
+			{Name: "camera", Value: "URL", Usage: "save the camera's RTSP address, e.g. rtsp://192.168.1.60/live"},
+			{Name: "no-camera", Usage: "forget the saved camera address and nothing else"},
+			{Name: "forget", Usage: "remove the saved printer, its password, and the saved camera"},
 		},
 		Pos: []posArg{{Label: "printer address", Kind: "hosts"}},
 	},
@@ -263,7 +270,12 @@ used; with several, name one with --printer, or give --team directly.`,
 		Args:    "[FILE]",
 		Summary: "Save a snapshot from the printer's camera",
 		Help: `Writes snapshot.jpg unless you name a file, or pipe it somewhere.
-Needs Prusa Connect and a camera.`,
+
+The picture comes from the first of these that works: the printer's own
+camera API (Buddy firmware has none), the camera's RTSP stream if you saved
+its address with ` + "`prusactl setup --camera`" + ` (or PRUSACTL_CAMERA_URL; needs ffmpeg),
+or Prusa Connect. --via direct allows only the first two, --via connect only
+the last.`,
 		Flags: flags(printerFlags, []flagSpec{{Name: "camera", Value: "ID", Usage: "which camera, when there are several"}}),
 		Pos:   []posArg{{Label: "file", Kind: "files"}},
 	},

@@ -38,7 +38,12 @@ func openTools(ctx context.Context) (*toolClient, error) {
 	if _, err := srv.Connect(ctx, serverT); err != nil {
 		return nil, err
 	}
-	cs, err := mcp.NewClient(&mcp.Implementation{Name: "prusactl-cli", Version: buildVersion()}, nil).Connect(ctx, clientT, nil)
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "prusactl-cli", Version: buildVersion()}, &mcp.ClientOptions{
+		// A tool that waits on the printer says how far it is.
+		ProgressNotificationHandler: func(_ context.Context, r *mcp.ProgressNotificationClientRequest) {
+			fmt.Fprintln(os.Stderr, r.Params.Message)
+		},
+	}).Connect(ctx, clientT, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -48,7 +53,9 @@ func openTools(ctx context.Context) (*toolClient, error) {
 // call runs a tool and returns its JSON result. A tool that reports an error
 // returns it as an error, so the CLI exits non-zero with the tool's own message.
 func (t *toolClient) call(ctx context.Context, name string, args map[string]any) (json.RawMessage, error) {
-	res, err := t.session.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
+	params := &mcp.CallToolParams{Name: name, Arguments: args}
+	params.SetProgressToken("prusactl")
+	res, err := t.session.CallTool(ctx, params)
 	if err != nil {
 		return nil, err
 	}

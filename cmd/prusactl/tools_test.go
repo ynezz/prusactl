@@ -202,3 +202,17 @@ func TestRewritesReachTheReaderAsFlags(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderFirmwareStatus(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{`{"printer":"p","current":"6.5.7+1","latest":"6.8.1","state":"outdated","update_available":true,"update_supported":true}`, "`prusactl firmware update`"},
+		{`{"printer":"p","current":"6.8.1+2","latest":"6.8.1","state":"supported","update_available":false,"update_supported":true}`, "Up to date."},
+		{`{"printer":"p","current":"6.8.1","update_available":false}`, "doesn't say which firmware is the latest"},
+	} {
+		var b strings.Builder
+		renderFirmwareStatus(&b, decodeMap(json.RawMessage(tc.in)))
+		if !strings.Contains(b.String(), tc.want) {
+			t.Errorf("%s: missing %q in:\n%s", tc.in, tc.want, b.String())
+		}
+	}
+}

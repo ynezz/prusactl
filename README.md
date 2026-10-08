@@ -261,6 +261,8 @@ The printer's PrusaLink password is kept in the same keychain.
 | `get_telemetry`, `list_events` | Connect | Telemetry history and the event log |
 | `list_connect_files` | Connect | Connect cloud storage |
 | `delete_connect_files` | Connect | Delete from Connect cloud storage, freeing the team's quota |
+| `get_firmware_status` | Connect | The firmware the printer runs, the latest Connect offers, and whether they differ |
+| `update_firmware` | Connect | Copy the firmware to the printer's USB drive and install it with `FLASH` (see [Firmware](#firmware)) |
 | `api_request` | both | Any other endpoint: `/api/...` goes to the printer, `/app/...` to Connect |
 
 Every `printer` argument accepts a name, serial number, or Connect UUID. With one
@@ -290,6 +292,7 @@ prusactl telemetry                 recorded temperatures and speeds
 prusactl transfers                 file transfers in progress
 prusactl camera [FILE]             save a snapshot from the printer's camera (RTSP or Connect)
 prusactl cmd ls|send|status        run a firmware command through Prusa Connect
+prusactl firmware [update]         the printer's firmware; update installs the latest via Connect
 
 prusactl api [METHOD] PATH [JSON]  /api/... to the printer, /app/... to Prusa Connect
 prusactl completion bash|zsh|fish  print a shell completion script
@@ -321,6 +324,24 @@ leaves the printer alone; `--no-camera` forgets just the camera).
 `prusactl api` masks API keys and tokens in responses (Connect's printer record
 carries the PrusaLink and Connect keys), so its output is safe to paste or hand
 to an agent. `--raw` shows them.
+
+## Firmware
+
+`prusactl firmware` shows the firmware the printer runs and the latest one Prusa
+Connect offers for it. `prusactl firmware update` has Connect copy its hosted
+`.bbf` to the printer's USB drive and then installs it with the `FLASH` command,
+which restarts the printer. It waits for the copy and does nothing if the
+printer already runs the latest.
+
+```sh
+prusactl firmware                       # running vs latest
+prusactl firmware update [--version X]  # copy, then install
+```
+
+`FLASH` is accepted only while the printer is idle, ready, finished or stopped.
+During a print the file is copied and left on the drive, not installed; run
+`update` again afterwards. The printer may ask for a confirmation on its screen.
+Firmware goes through Prusa Connect only, so you need `prusactl login`.
 
 ## Limits
 

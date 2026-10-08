@@ -112,7 +112,7 @@ func commandFacts(raw json.RawMessage) (int64, string) {
 // runCommand validates a command against what the printer supports and its
 // current state, then sends it. Synchronous commands wait for the printer to
 // acknowledge; asynchronous ones return the queued command record.
-func (s *Server) runCommand(ctx context.Context, p printerSummary, command string, kwargs map[string]any, async bool, timeout int) (*commandResult, error) {
+func (s *Server) runCommand(ctx context.Context, p printerSummary, command string, kwargs map[string]any, async bool, timeout int, onSend ...func()) (*commandResult, error) {
 	command = strings.ToUpper(strings.TrimSpace(command))
 	if kwargs == nil {
 		kwargs = map[string]any{}
@@ -156,6 +156,9 @@ func (s *Server) runCommand(ctx context.Context, p printerSummary, command strin
 		}
 	}
 
+	for _, f := range onSend { // the command passed every check and goes out now
+		f()
+	}
 	body := map[string]any{"kwargs": kwargs}
 	path := printerPath(p.UUID, "commands")
 	q := url.Values{}

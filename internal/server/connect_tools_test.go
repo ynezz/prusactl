@@ -143,6 +143,11 @@ func (f *fakeConnect) sentCommands() []string {
 
 func connectConnectTools(t *testing.T, fc http.Handler, tweaks ...func(*Server)) *mcp.ClientSession {
 	t.Helper()
+	return connectConnectToolsWith(t, nil, fc, tweaks...)
+}
+
+func connectConnectToolsWith(t *testing.T, opts *mcp.ClientOptions, fc http.Handler, tweaks ...func(*Server)) *mcp.ClientSession {
+	t.Helper()
 	appdirtest.Use(t) // the refresh lock file lives under the config dir
 	srv := httptest.NewServer(fc)
 	t.Cleanup(srv.Close)
@@ -166,7 +171,7 @@ func connectConnectTools(t *testing.T, fc http.Handler, tweaks ...func(*Server))
 	if _, err := s.mcp.Connect(ctx, st, nil); err != nil {
 		t.Fatal(err)
 	}
-	cs, err := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil).Connect(ctx, ct, nil)
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, opts).Connect(ctx, ct, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

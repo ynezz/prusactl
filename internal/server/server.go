@@ -25,7 +25,7 @@ import (
 
 const instructions = `Controls the user's Prusa 3D printer.
 
-Two routes reach it. Direct: the printer's own API on the local network (PrusaLink), used whenever the printer is reachable. Prusa Connect: Prusa's cloud service, used when the printer isn't reachable directly (e.g. the user is away) and for things only Connect offers: camera, on-screen dialogs, the print queue, history, events, and firmware commands such as heating and moving. Tools that can take either route say which one they used ("via"); the rest are named above and always use the route they need.
+Two routes reach it. Direct: the printer's own API on the local network (PrusaLink), used whenever the printer is reachable. Prusa Connect: Prusa's cloud service, used when the printer isn't reachable directly (e.g. the user is away) and for things only Connect offers: camera, on-screen dialogs, the print queue, history, events, and commands such as heating, moving and installing firmware. Tools that can take either route say which one they used ("via"); the rest are named above and always use the route they need.
 
 Start with connection_status or get_printer. Printer arguments accept a name, serial number, or Connect UUID, and can be omitted with a single printer.
 
@@ -65,6 +65,10 @@ type Server struct {
 	cameraURL func() (string, error)
 	grabber   snapshotter
 
+	// How often update_firmware polls the copy to the printer, and how long it
+	// waits for a sign of progress.
+	fwPoll, fwStall time.Duration
+
 	probeMu sync.Mutex
 	probed  time.Time
 	info    *linkInfo
@@ -74,7 +78,7 @@ type Server struct {
 // New builds the MCP server and registers every tool. lc may be nil, with
 // lcErr explaining why.
 func New(session *auth.Session, cc *connect.Client, lc *link.Client, lcErr error, version string) *Server {
-	s := &Server{session: session, connect: cc, link: lc, linkErr: lcErr, openLink: link.Open, cameraURL: link.LoadCamera, grabber: camera.Grabber{}}
+	s := &Server{session: session, connect: cc, link: lc, linkErr: lcErr, openLink: link.Open, cameraURL: link.LoadCamera, grabber: camera.Grabber{}, fwPoll: 2 * time.Second, fwStall: 2 * time.Minute}
 	s.mcp = mcp.NewServer(
 		&mcp.Implementation{Name: "prusactl", Title: "Prusa printer", Version: version},
 		&mcp.ServerOptions{Instructions: instructionsFor()},
@@ -83,6 +87,7 @@ func New(session *auth.Session, cc *connect.Client, lc *link.Client, lcErr error
 	s.addPrinterTools()
 	s.addControlTools()
 	s.addFileTools()
+	s.addFirmwareTools()
 	s.addJobTools()
 	s.addAPITool()
 	return s

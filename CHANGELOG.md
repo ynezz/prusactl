@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `prusactl firmware` and the `get_firmware_status` and `update_firmware` tools,
+  through Prusa Connect only. Status shows the running and the latest firmware
+  and whether they differ. `update` has Connect copy its hosted `.bbf` to the
+  printer's USB drive, then sends `FLASH` to install it. While the printer is
+  printing `FLASH` is refused, so the file is left on the drive and the result
+  says so. Nothing happens when the printer already runs the latest.
 - **The camera works without Prusa Connect.** The Buddy3D camera is a separate
   Wi-Fi device that talks to Connect itself and serves RTSP at
   `rtsp://<camera-ip>/live`; Buddy firmware's PrusaLink has no camera endpoint,

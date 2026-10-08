@@ -280,6 +280,25 @@ the last.`,
 		Pos:   []posArg{{Label: "file", Kind: "files"}},
 	},
 	{
+		Name:    "firmware",
+		Args:    "[status | update]",
+		Summary: "Check the printer's firmware, and install an update through Prusa Connect",
+		Help: `status (the default) shows the firmware the printer runs and the latest one
+Prusa Connect offers for it.
+
+update has Prusa Connect copy the firmware file to the printer's USB drive,
+then installs it with the FLASH command, which restarts the printer. It waits
+for the copy (a few minutes at most) and does nothing if the printer already
+runs the latest and you give no --version. FLASH is accepted only while the
+printer is idle, ready, finished or stopped: during a print the file is left
+on the drive, not installed, and you run update again afterwards. The printer
+may ask you to confirm on its screen. Both go through Prusa Connect only.`,
+		Flags: flags(printerFlags, []flagSpec{
+			{Name: "version", Value: "X.Y.Z", Usage: "for update, a version other than the latest, e.g. 6.5.7"},
+		}),
+		Pos: []posArg{{Label: "action", Kind: "status update"}},
+	},
+	{
 		Name:    "cmd",
 		Args:    "ls | send NAME [key=value ...] | status COMMAND-ID",
 		Summary: "Run a firmware command through Prusa Connect",

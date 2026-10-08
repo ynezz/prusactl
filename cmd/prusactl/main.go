@@ -171,6 +171,7 @@ func run(ctx context.Context, args []string) error {
 		"transfers": transfersCmd,
 		"camera":    cameraCmd,
 		"cmd":       cmdCmd,
+		"firmware":  firmwareCmd,
 	}
 	if h, ok := handlers[name]; ok {
 		opts, pos, err := cmd.parse(rest)

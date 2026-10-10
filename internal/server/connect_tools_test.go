@@ -50,6 +50,7 @@ type fakeConnect struct {
 	serviceDown   bool   // GraphQL answers CameraServiceError
 	snapshotURL   string // overrides the snapshot URL GraphQL hands out
 	snapshotAuths []string
+	noCameras     bool // the account has no camera on this printer
 }
 
 func (f *fakeConnect) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -88,6 +89,10 @@ func (f *fakeConnect) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/app/printers/u1/queue":
 		_ = json.NewEncoder(w).Encode(map[string]any{"queue": f.queue})
 	case r.URL.Path == "/app/printers/u1/cameras":
+		if f.noCameras {
+			fmt.Fprint(w, `{"cameras":[]}`)
+			return
+		}
 		fmt.Fprint(w, `{"cameras":[{"id":601734,"name":"Buddy3D Camera","token":"cam-token"}]}`)
 	case r.URL.Path == "/graphql" && r.Method == http.MethodPost:
 		conn := map[string]any{"__typename": "CameraServiceError", "errorCode": "UNAVAILABLE"}

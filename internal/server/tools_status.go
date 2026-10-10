@@ -49,7 +49,14 @@ func (s *Server) Status(ctx context.Context) map[string]any {
 	cam := map[string]any{"configured": false}
 	if s.cameraURL != nil {
 		if addr, err := s.cameraURL(); err == nil && addr != "" {
-			cam["configured"], cam["rtsp"] = true, camera.Mask(addr)
+			cam["configured"] = true
+			// Never the raw value: an environment variable with a typo in the
+			// scheme isn't an RTSP address, and the mask only knows those.
+			if valid, verr := camera.Validate(addr); verr != nil {
+				cam["error"] = verr.Error()
+			} else {
+				cam["rtsp"] = valid
+			}
 		}
 	}
 	return map[string]any{"direct": direct, "connect": cloud, "camera": cam}

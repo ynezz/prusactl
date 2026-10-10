@@ -56,18 +56,52 @@ func snapshot(t *testing.T, cs *mcp.ClientSession, args map[string]any) (text st
 func TestSnapshotFromRTSPWhenThePrinterHasNoCameraAPI(t *testing.T) {
 	g := &fakeGrabber{}
 	fp := &fakePrinter{state: "IDLE"}
-	cs := connectToolsWith(t, fp, withCamera(g, "rtsp://cam:hunter2@10.0.0.9/live"))
+	cs := connectToolsWith(t, fp, withCamera(g, "rtsp://10.0.0.9/live"))
 	for i := 0; i < 2; i++ {
 		text, img, isErr := snapshot(t, cs, nil)
 		if isErr || len(img) == 0 {
 			t.Fatalf("call %d: %q (error=%v)", i, text, isErr)
 		}
-		if strings.Contains(text, "hunter2") || !strings.Contains(text, "10.0.0.9/live") {
-			t.Errorf("the note should name the camera without its password: %q", text)
+		if !strings.Contains(text, "10.0.0.9/live") {
+			t.Errorf("the note should name the camera: %q", text)
 		}
 	}
-	if len(g.urls) != 2 || g.urls[0] != "rtsp://cam:hunter2@10.0.0.9/live" {
+	if len(g.urls) != 2 || g.urls[0] != "rtsp://10.0.0.9/live" {
 		t.Errorf("grabbed %v", g.urls)
+	}
+}
+
+// An address with credentials is refused wherever it came from, the saved
+// config or PRUSACTL_CAMERA_URL, and the refusal repeats neither.
+func TestSnapshotRefusesASavedAddressWithCredentials(t *testing.T) {
+	g := &fakeGrabber{}
+	cs := connectToolsWith(t, &fakePrinter{state: "IDLE"}, withCamera(g, "rtsp://cam:hunter2@10.0.0.9/live"))
+	text, _, isErr := snapshot(t, cs, nil)
+	if !isErr || !strings.Contains(text, "credentials") || strings.Contains(text, "hunter2") {
+		t.Errorf("%q (error=%v)", text, isErr)
+	}
+	if len(g.urls) != 0 {
+		t.Errorf("the address reached ffmpeg: %v", g.urls)
+	}
+}
+
+// A printer that errors on its camera endpoint (rebooting, busy) says nothing
+// about the camera, which is its own device: the RTSP source is still tried.
+func TestSnapshotFallsThroughWhenThePrinterCameraErrors(t *testing.T) {
+	g := &fakeGrabber{}
+	fp := &fakePrinter{state: "IDLE", handler: func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path != "/api/v1/cameras/snap" {
+			return false
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return true
+	}}
+	cs := connectToolsWith(t, fp, withCamera(g, "rtsp://10.0.0.9/live"))
+	if text, img, isErr := snapshot(t, cs, nil); isErr || len(img) == 0 {
+		t.Fatalf("%q (error=%v)", text, isErr)
+	}
+	if len(g.urls) != 1 {
+		t.Errorf("RTSP wasn't tried: %v", g.urls)
 	}
 }
 
@@ -142,8 +176,17 @@ func TestSnapshotWhenThePrinterIsUnreachable(t *testing.T) {
 func TestSnapshotFallsBackToConnectWhenTheCameraFails(t *testing.T) {
 	g := &fakeGrabber{err: errors.New("Connection refused")}
 	cs := connectConnectTools(t, &fakeConnect{state: "IDLE"}, withCamera(g, "rtsp://10.0.0.9/live"))
-	text, _, isErr := snapshot(t, cs, nil)
-	if !isErr || !strings.Contains(text, "Connection refused") || !strings.Contains(text, "Prusa Connect didn't have a picture") {
+	text, img, isErr := snapshot(t, cs, nil)
+	if isErr || len(img) == 0 {
+		t.Fatalf("Connect's picture should have come through: %q", text)
+	}
+	// A camera that was skipped must not look like one that worked.
+	if !strings.Contains(text, "Connection refused") || !strings.Contains(text, "Prusa Connect") {
+		t.Errorf("the note should say the camera was skipped, and why: %q", text)
+	}
+	// With nothing on Connect either, both reasons show.
+	none := connectConnectTools(t, &fakeConnect{state: "IDLE", noCameras: true}, withCamera(g, "rtsp://10.0.0.9/live"))
+	if text, _, isErr := snapshot(t, none, nil); !isErr || !strings.Contains(text, "Connection refused") || !strings.Contains(text, "Prusa Connect didn't have a picture") {
 		t.Errorf("the local error and Connect's should both show: %q", text)
 	}
 	text, _, isErr = snapshot(t, cs, map[string]any{"via": "direct"})

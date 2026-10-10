@@ -219,6 +219,12 @@ func setup(ctx context.Context, args []string) error {
 		if cameraURL, err = camera.Validate(cameraURL); err != nil {
 			return err
 		}
+		if opts.on("forget") {
+			return errors.New("setup: --forget removes the camera too, so --camera with it would be lost; run them separately")
+		}
+		if len(pos) == 0 && (opts.given("user") || opts.given("api-key") || opts.given("password-stdin")) {
+			return errors.New("setup: --camera on its own saves only the camera; --user, --api-key and --password-stdin go with a printer ADDRESS")
+		}
 	}
 	if opts.on("no-camera") {
 		if cameraURL != "" || opts.on("forget") || len(pos) > 0 {
@@ -259,14 +265,18 @@ func setup(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
+		savedCamera, _ := link.LoadCamera()
 		if err := link.RemoveConfig(cfg); err != nil {
 			return err
 		}
-		kind := "password"
+		what := "its saved password"
 		if cfg.Auth == link.AuthAPIKey {
-			kind = "API key"
+			what = "its saved API key"
 		}
-		fmt.Printf("Forgot %s and its saved %s.\n", cfg.Host, kind)
+		if savedCamera != "" && os.Getenv("PRUSACTL_CAMERA_URL") == "" {
+			what += ", and the camera address"
+		}
+		fmt.Printf("Forgot %s and %s.\n", cfg.Host, what)
 		return nil
 	}
 
@@ -479,7 +489,11 @@ func status(ctx context.Context, srv *server.Server, lc *link.Client) error {
 	}
 
 	if cam, _ := st["camera"].(map[string]any); cam["configured"] == true {
-		fmt.Printf("Camera (RTSP):     %v\n", cam["rtsp"])
+		if e, ok := cam["error"]; ok {
+			fmt.Printf("Camera (RTSP):     not usable: %v\n", e)
+		} else {
+			fmt.Printf("Camera (RTSP):     %v\n", cam["rtsp"])
+		}
 	}
 
 	// Without the direct route, show the printers as Prusa Connect sees them.

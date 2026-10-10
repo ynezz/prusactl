@@ -51,15 +51,28 @@ func (s *Server) cameraSnapshot(ctx context.Context, in snapshotInput) (*mcp.Cal
 		if rtsp, cerr = s.cameraURL(); cerr != nil {
 			return nil, cerr
 		}
+		// Checked here, not only when it was saved: PRUSACTL_CAMERA_URL is
+		// never checked at all otherwise, and what is allowed can change
+		// between versions.
+		if rtsp != "" {
+			if rtsp, cerr = camera.Validate(rtsp); cerr != nil {
+				return nil, cerr
+			}
+		}
 	}
 
 	var reason error // why the local sources can't answer
 	switch {
 	case rerr == nil:
-		if res, ok, err := s.printerCameraSnap(ctx, in.CameraID, t.name); err != nil {
-			return nil, err
-		} else if ok {
+		res, ok, err := s.printerCameraSnap(ctx, in.CameraID, t.name)
+		if ok {
 			return res, nil
+		}
+		// The camera is its own device: a printer that errors on its camera
+		// endpoint (rebooting, busy) says nothing about it. The error only
+		// ends the call when there is nothing else local to try.
+		if err != nil && (rtsp == "" || in.CameraID != "") {
+			return nil, err
 		}
 		if rtsp != "" && in.CameraID == "" {
 			return s.rtspOrConnect(ctx, in, via, rtsp, t.name)
@@ -94,7 +107,22 @@ func (s *Server) rtspOrConnect(ctx context.Context, in snapshotInput, via, rtsp,
 	if cerr != nil {
 		return nil, fmt.Errorf("%w; Prusa Connect didn't have a picture either: %v", err, cerr)
 	}
+	// Say so. A camera that was skipped looks exactly like one that worked,
+	// and the likely cause (ffmpeg on the terminal's PATH but not on the MCP
+	// server's) would otherwise never be noticed.
+	prefixNote(res, fmt.Sprintf("The RTSP camera was skipped (%v), so this is Prusa Connect's picture. ", err))
 	return res, nil
+}
+
+// prefixNote puts text in front of the sentence that goes with a picture.
+func prefixNote(res *mcp.CallToolResult, text string) {
+	for _, c := range res.Content {
+		if t, ok := c.(*mcp.TextContent); ok {
+			t.Text = text + t.Text
+			return
+		}
+	}
+	res.Content = append([]mcp.Content{&mcp.TextContent{Text: strings.TrimSpace(text)}}, res.Content...)
 }
 
 // noLocalCamera says how to give prusactl a camera it can reach locally.
@@ -108,7 +136,7 @@ func noLocalCamera(cameraID string) error {
 
 func cameraAdvice() string {
 	if hint.Managed() {
-		return "set PRUSACTL_CAMERA_URL to the camera's RTSP address (rtsp://<camera-ip>/live)"
+		return "enter the camera's RTSP address (rtsp://<camera-ip>/live) in the extension's settings; ffmpeg has to be installed where the app can find it"
 	}
 	return "run `prusactl setup --camera rtsp://<camera-ip>/live`"
 }

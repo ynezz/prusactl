@@ -71,7 +71,7 @@ func TestSnapshotErrors(t *testing.T) {
 	for _, tc := range []struct {
 		name, mode, url, want string
 	}{
-		{"ffmpeg fails", "fail", "rtsp://cam:hunter2@10.0.0.9/live", "Connection refused"},
+		{"ffmpeg fails", "fail", "rtsp://10.0.0.9/live", "Connection refused"}, // the fake echoes a password; Mask must catch it
 		{"not an image", "garbage", "rtsp://10.0.0.9/live", "ffmpeg produced no picture"},
 		{"cut short", "truncated", "rtsp://10.0.0.9/live", "cut short"},
 		{"over the cap", "huge", "rtsp://10.0.0.9/live", "over 16 MB"},
@@ -136,8 +136,8 @@ func TestRTSPSIsRefused(t *testing.T) {
 // lowercases it and leaves the rest alone.
 func TestValidateLowercasesTheScheme(t *testing.T) {
 	for in, want := range map[string]string{
-		"RTSP://10.0.0.9/live":                 "rtsp://10.0.0.9/live",
-		"  RtSp://cam:PassWord@10.0.0.9/Live ": "rtsp://cam:PassWord@10.0.0.9/Live",
+		"RTSP://10.0.0.9/live":    "rtsp://10.0.0.9/live",
+		"  RtSp://10.0.0.9/Live ": "rtsp://10.0.0.9/Live",
 	} {
 		if got, err := Validate(in); err != nil || got != want {
 			t.Errorf("Validate(%q) = %q, %v, want %q", in, got, err, want)
@@ -191,6 +191,34 @@ func TestMaskHidesPasswordsInMalformedAddresses(t *testing.T) {
 	} {
 		if got := Mask(in); got != want {
 			t.Errorf("Mask(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// Credentials in the address are refused rather than handled: a password would
+// reach ffmpeg as an argument, readable by any local user with ps, and sit in
+// plain text in the config. The Buddy3D needs none. The refusal says what to
+// use instead and never repeats the credentials.
+func TestValidateRefusesCredentials(t *testing.T) {
+	for _, in := range []string{"rtsp://cam:hunter2@10.0.0.9/live", "rtsp://cam@10.0.0.9/live"} {
+		_, err := Validate(in)
+		if !errors.Is(err, ErrCredentials) {
+			t.Errorf("Validate(%q) = %v, want ErrCredentials", in, err)
+			continue
+		}
+		if strings.Contains(err.Error(), "hunter2") || strings.Contains(err.Error(), "cam:") || strings.Contains(err.Error(), "cam@") {
+			t.Errorf("the refusal shows the credentials: %v", err)
+		}
+		if !strings.Contains(err.Error(), "rtsp://10.0.0.9/live") {
+			t.Errorf("the refusal should say what to use instead: %v", err)
+		}
+		ran := t.TempDir() + "/ran"
+		g := Grabber{Binary: os.Args[0], Env: []string{"FAKE_FFMPEG=ok", "FAKE_ARGS_FILE=" + ran}}
+		if _, err := g.Snapshot(context.Background(), in); !errors.Is(err, ErrCredentials) {
+			t.Errorf("Snapshot(%q) = %v, want ErrCredentials", in, err)
+		}
+		if _, err := os.Stat(ran); err == nil {
+			t.Errorf("Snapshot(%q) ran ffmpeg", in)
 		}
 	}
 }

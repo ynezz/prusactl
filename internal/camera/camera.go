@@ -40,9 +40,15 @@ type Grabber struct {
 // ErrRTSPS means the address asks for TLS, which ffmpeg can't be made to check.
 var ErrRTSPS = errors.New("rtsps:// cameras aren't supported: ffmpeg does not verify the camera's TLS certificate (its RTSP code never passes -tls_verify or -ca_file on to TLS, tested on 7.1.5), so anyone on the network could pose as the camera and read the password; use the camera's plain rtsp:// address")
 
-// Validate checks that raw is an rtsp:// address, and returns it with the
-// scheme in lowercase. An rtsps://
-// address is refused, see ErrRTSPS.
+// ErrCredentials means the address carries a user or password. ffmpeg would get
+// it on its command line, where any local user can read it with ps, and it
+// would sit in plain text in prusactl's config; the Buddy3D camera takes none,
+// so rather than handle a password carefully the address is refused.
+var ErrCredentials = errors.New("credentials in the camera address aren't supported: ffmpeg would get the password on its command line, readable by any local user with ps, and it would be stored in plain text; the Buddy3D camera takes none")
+
+// Validate checks that raw is an rtsp:// address without credentials, and
+// returns it with the scheme in lowercase. An rtsps:// address is refused, see
+// ErrRTSPS; one with a user or password too, see ErrCredentials.
 func Validate(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	u, err := url.Parse(raw)
@@ -51,6 +57,9 @@ func Validate(raw string) (string, error) {
 	}
 	if err != nil || u.Host == "" || !strings.EqualFold(u.Scheme, "rtsp") {
 		return "", fmt.Errorf("not a camera address: %q (expected rtsp://<camera-ip>/live)", maskAny(raw))
+	}
+	if u.User != nil {
+		return "", fmt.Errorf("%w; use rtsp://%s%s", ErrCredentials, u.Host, u.Path)
 	}
 	// ffmpeg only knows the lowercase scheme.
 	return "rtsp" + raw[len("rtsp"):], nil

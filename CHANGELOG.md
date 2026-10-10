@@ -10,6 +10,11 @@
   the address and prusactl grabs a frame with ffmpeg. A PrusaLink that serves
   `/api/v1/cameras/snap` is used first, and Connect is still the fallback.
   `prusactl status` shows the saved camera. Only plain `rtsp://` addresses are
+## Unreleased
+
+  accepted (ffmpeg doesn't verify the certificate of `rtsps://`), and one with a
+  user or password is refused: ffmpeg would get it on its command line, readable
+  by any local user, and it would be stored in plain text. The Buddy3D takes none.
   accepted (ffmpeg doesn't verify the certificate of `rtsps://`), and a password
   in the address is masked wherever prusactl shows it.
 - `prusactl login --manual` signs in without a password passing through the

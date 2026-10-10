@@ -195,15 +195,16 @@ A snapshot comes from the first source that works: the printer's own
 `/api/v1/cameras/snap`, if its PrusaLink has one (other PrusaLink builds do);
 the saved RTSP address; then Prusa Connect. `via: "direct"` limits it to the
 first two, `via: "connect"` to Connect. `PRUSACTL_CAMERA_URL` overrides the saved
-address, and a password in the address is masked wherever prusactl shows it.
+address. An address with a user or password is refused: ffmpeg would get the
+password on its command line, where any local user can read it with `ps`, and it
+would sit in plain text in the config. The Buddy3D camera takes none.
 
 Only plain `rtsp://` addresses are accepted. `rtsps://` is refused on purpose:
 FFmpeg 7.1.5 completes the TLS handshake with a self-signed certificate and sends
 the camera's credentials even with `-tls_verify 1` and `-ca_file`, because its RTSP
 code never hands those options to the TLS layer. The Buddy3D camera serves plain
-RTSP, so this costs nothing there. Residual risk: plain RTSP sends the password
-(and the video) unencrypted, so anyone on your network can read it; use a camera
-account that only has access to the picture, and keep the camera off untrusted
+RTSP, so this costs nothing there. Residual risk: plain RTSP sends the video unencrypted, so anyone on your network
+can watch it; keep the camera off untrusted
 networks.
 
 ### Signing in to Prusa Connect

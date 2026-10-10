@@ -145,7 +145,7 @@ func TestSetupForgetRemovesACameraSavedAlone(t *testing.T) {
 	cfgPath := filepath.Join(home, "config.json")
 	t.Setenv("PRUSACTL_CONFIG", cfgPath)
 
-	if err := setup(context.Background(), []string{"--camera", "rtsp://cam:pw@127.0.0.1:1/live"}); err != nil {
+	if err := setup(context.Background(), []string{"--camera", "rtsp://127.0.0.1:1/live"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := setup(context.Background(), []string{"--forget"}); err != nil {

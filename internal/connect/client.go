@@ -24,6 +24,11 @@ import (
 // DefaultBaseURL is the production Connect origin.
 const DefaultBaseURL = "https://connect.prusa3d.com"
 
+// DefaultGraphQLURL is Connect's GraphQL API (GRAPHQL_API_URL in
+// https://connect.prusa3d.com/environment.js), where the web app has read
+// camera snapshots since Prusa moved cameras to its camera service in 2026-09.
+const DefaultGraphQLURL = "https://connect-api.prusa3d.com/graphql"
+
 // TokenSource supplies bearer tokens.
 type TokenSource interface {
 	AccessToken(ctx context.Context) (string, error)
@@ -32,23 +37,30 @@ type TokenSource interface {
 
 // Client calls the Connect API.
 type Client struct {
-	BaseURL   string
-	HTTP      *http.Client
-	Tokens    TokenSource
-	UserAgent string
+	BaseURL    string
+	GraphQLURL string
+	HTTP       *http.Client
+	Tokens     TokenSource
+	UserAgent  string
 }
 
-// New builds a client; PRUSA_CONNECT_URL overrides the origin.
+// New builds a client; PRUSA_CONNECT_URL overrides the origin and
+// PRUSA_CONNECT_GRAPHQL_URL the GraphQL endpoint.
 func New(tokens TokenSource, userAgent string) *Client {
 	base := DefaultBaseURL
 	if v := os.Getenv("PRUSA_CONNECT_URL"); v != "" {
 		base = strings.TrimRight(v, "/")
 	}
+	graphql := DefaultGraphQLURL
+	if v := os.Getenv("PRUSA_CONNECT_GRAPHQL_URL"); v != "" {
+		graphql = v
+	}
 	return &Client{
-		BaseURL:   base,
-		HTTP:      &http.Client{Timeout: 60 * time.Second},
-		Tokens:    tokens,
-		UserAgent: userAgent,
+		BaseURL:    base,
+		GraphQLURL: graphql,
+		HTTP:       &http.Client{Timeout: 60 * time.Second},
+		Tokens:     tokens,
+		UserAgent:  userAgent,
 	}
 }
 
@@ -148,8 +160,20 @@ func (c *Client) Do(ctx context.Context, req Request) (*http.Response, error) {
 
 func (c *Client) send(ctx context.Context, req Request, token string) (*http.Response, error) {
 	u := c.BaseURL + req.Path
+	if strings.HasPrefix(req.Path, "https://") || strings.HasPrefix(req.Path, "http://") {
+		// An absolute URL, e.g. a snapshot on Prusa's camera service. The
+		// session's token only ever goes to Prusa.
+		if !c.trusted(req.Path) {
+			return nil, fmt.Errorf("refusing to send the Prusa Connect session to %s", hostOf(req.Path))
+		}
+		u = req.Path
+	}
 	if len(req.Query) > 0 {
-		u += "?" + req.Query.Encode()
+		sep := "?"
+		if strings.Contains(u, "?") {
+			sep = "&"
+		}
+		u += sep + req.Query.Encode()
 	}
 	var body io.Reader
 	contentType := req.ContentType
@@ -199,6 +223,30 @@ func (c *Client) send(ctx context.Context, req Request, token string) (*http.Res
 		return nil, fmt.Errorf("Prusa Connect: %s %s: %w", req.Method, req.Path, err)
 	}
 	return resp, nil
+}
+
+// trusted reports whether an absolute URL may receive the session: HTTPS on
+// prusa3d.com or a subdomain, or exactly the configured Connect or GraphQL
+// origin (scheme, host and port).
+func (c *Client) trusted(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	for _, own := range []string{c.BaseURL, c.GraphQLURL} {
+		if o, err := url.Parse(own); err == nil && o.Host != "" && strings.EqualFold(o.Scheme, u.Scheme) && strings.EqualFold(o.Host, u.Host) {
+			return true
+		}
+	}
+	host := strings.ToLower(u.Hostname())
+	return u.Scheme == "https" && (host == "prusa3d.com" || strings.HasSuffix(host, ".prusa3d.com"))
+}
+
+func hostOf(raw string) string {
+	if u, err := url.Parse(raw); err == nil && u.Host != "" {
+		return u.Host
+	}
+	return "another site"
 }
 
 // JSON performs req and decodes a JSON response into out (which may be nil,

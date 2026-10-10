@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Camera snapshots work again.** Around 2026-09-30 Prusa moved cameras to a
+  new camera service, and the endpoints `get_camera_snapshot` and
+  `prusactl camera` used stopped serving images (404), which prusactl reported
+  as a possible API change. Snapshots now come from the camera service, as on
+  the Connect website: Connect's GraphQL API gives each camera's latest
+  snapshot URL, fetched with your session. The old endpoints remain the
+  fallback. The session is only ever sent to Prusa's own hosts.
+
 ## 0.2.1 (2026-09-29)
 
 - **The question about the plate came back.** 0.2.0 reworded tool errors on

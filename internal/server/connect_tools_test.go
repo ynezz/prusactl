@@ -44,6 +44,12 @@ type fakeConnect struct {
 	events []map[string]any // newest first, as Connect returns them
 	queue  []map[string]any
 	gone   []string // file hashes the delete asked Connect to drop
+
+	// Cameras: the camera service (GraphQL + snapshots) and the old endpoints.
+	base          string // the fake's own URL
+	serviceDown   bool   // GraphQL answers CameraServiceError
+	snapshotURL   string // overrides the snapshot URL GraphQL hands out
+	snapshotAuths []string
 }
 
 func (f *fakeConnect) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -81,6 +87,26 @@ func (f *fakeConnect) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		})
 	case r.URL.Path == "/app/printers/u1/queue":
 		_ = json.NewEncoder(w).Encode(map[string]any{"queue": f.queue})
+	case r.URL.Path == "/app/printers/u1/cameras":
+		fmt.Fprint(w, `{"cameras":[{"id":601734,"name":"Buddy3D Camera","token":"cam-token"}]}`)
+	case r.URL.Path == "/graphql" && r.Method == http.MethodPost:
+		conn := map[string]any{"__typename": "CameraServiceError", "errorCode": "UNAVAILABLE"}
+		if !f.serviceDown {
+			u := f.snapshotURL
+			if u == "" {
+				u = f.base + "/v1/snapshot/cam-uuid"
+			}
+			node := map[string]any{"token": "cam-token", "snapshots": map[string]any{"lastSnapshotUrl": u}}
+			conn = map[string]any{"__typename": "CameraConnection", "edges": []any{map[string]any{"node": node}}}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"camera": map[string]any{"camerasConnection": conn}}})
+	case strings.HasPrefix(r.URL.Path, "/v1/snapshot/"):
+		f.snapshotAuths = append(f.snapshotAuths, r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "image/jpeg")
+		fmt.Fprint(w, "\xff\xd8service")
+	case r.URL.Path == "/app/cameras/601734/snapshots/last":
+		w.Header().Set("Content-Type", "image/jpeg")
+		fmt.Fprint(w, "\xff\xd8legacy")
 	case r.URL.Path == "/app/teams/1/files/raw" && r.Method == http.MethodDelete:
 		var body struct {
 			Hashes []string `json:"hashes"`
@@ -118,6 +144,8 @@ func connectConnectTools(t *testing.T, fc *fakeConnect) *mcp.ClientSession {
 	session := &auth.Session{Store: signedIn{}}
 	cc := connect.New(session, "test")
 	cc.BaseURL = srv.URL
+	cc.GraphQLURL = srv.URL + "/graphql"
+	fc.base = srv.URL
 	s := New(session, cc, nil, link.ErrNotConfigured, "test")
 	s.openLink = func() (*link.Client, error) { return nil, link.ErrNotConfigured }
 
@@ -191,5 +219,59 @@ func TestChangedConnectFormatIsReported(t *testing.T) {
 	}
 	if sent := fc.sentCommands(); len(sent) != 0 {
 		t.Fatalf("sent %v although the state couldn't be read", sent)
+	}
+}
+
+// snapshotImage calls get_camera_snapshot and returns the image bytes.
+func snapshotImage(t *testing.T, cs *mcp.ClientSession) string {
+	t.Helper()
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "get_camera_snapshot", Arguments: map[string]any{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range res.Content {
+		if img, ok := c.(*mcp.ImageContent); ok {
+			return string(img.Data)
+		}
+	}
+	t.Fatalf("no image in %+v", res.Content)
+	return ""
+}
+
+// Since Prusa's camera service move, snapshots come from the URL GraphQL gives
+// for the camera's token, fetched with the session.
+func TestCameraSnapshotFromCameraService(t *testing.T) {
+	fc := &fakeConnect{state: "IDLE"}
+	cs := connectConnectTools(t, fc)
+	if got := snapshotImage(t, cs); got != "\xff\xd8service" {
+		t.Fatalf("image %q, want the camera service's", got)
+	}
+	if len(fc.snapshotAuths) != 1 || fc.snapshotAuths[0] != "Bearer access" {
+		t.Fatalf("snapshot requests carried %v", fc.snapshotAuths)
+	}
+
+	fc.mu.Lock()
+	fc.serviceDown = true
+	fc.mu.Unlock()
+	if got := snapshotImage(t, cs); got != "\xff\xd8legacy" {
+		t.Fatalf("with the camera service down: image %q, want the old endpoint's", got)
+	}
+}
+
+// A snapshot URL off Prusa's hosts never receives the session.
+func TestCameraSnapshotSessionStaysWithPrusa(t *testing.T) {
+	var hits []string
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits = append(hits, r.Header.Get("Authorization"))
+		fmt.Fprint(w, "stolen")
+	}))
+	t.Cleanup(elsewhere.Close)
+	fc := &fakeConnect{state: "IDLE", snapshotURL: elsewhere.URL + "/v1/snapshot/cam-uuid"}
+	cs := connectConnectTools(t, fc)
+	if got := snapshotImage(t, cs); got != "\xff\xd8legacy" {
+		t.Fatalf("image %q, want the old endpoint's", got)
+	}
+	if len(hits) != 0 {
+		t.Fatalf("the other site was contacted: %v", hits)
 	}
 }

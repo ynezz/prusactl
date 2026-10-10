@@ -187,16 +187,29 @@ func (s *Server) addPrinterTools() {
 				return nil, nil, fmt.Errorf("no camera %q on %s", in.CameraID, p.Name)
 			}
 		}
-		id := connect.PathEscape(jsonID(cam["id"]))
-		query := url.Values{"printer_uuid": {p.UUID}}
-		resp, err := s.connect.Do(ctx, connect.Request{Method: http.MethodGet, Path: "/app/cameras/" + id + "/snapshots/last", Query: query})
-		if connect.IsStatus(err, http.StatusNotFound) {
-			// WebRTC cameras (Buddy3D) may never have pushed a full snapshot;
-			// the web app falls back to the thumbnail endpoint.
-			resp, err = s.connect.Do(ctx, connect.Request{Method: http.MethodGet, Path: "/thumbnail/camera/" + id, Query: query})
+		// Since Prusa moved cameras to its camera service (2026-09), snapshots
+		// come from the URL Connect's GraphQL API gives for the camera, found
+		// by its token. The older endpoints stay as a fallback.
+		var resp *http.Response
+		if token, _ := cam["token"].(string); token != "" {
+			if urls, err := s.connect.SnapshotURLs(ctx, p.UUID); err == nil && urls[token] != "" {
+				if r, err := s.connect.Do(ctx, connect.Request{Method: http.MethodGet, Path: urls[token]}); err == nil {
+					resp = r
+				}
+			}
 		}
-		if err != nil {
-			return nil, nil, err
+		if resp == nil {
+			id := connect.PathEscape(jsonID(cam["id"]))
+			query := url.Values{"printer_uuid": {p.UUID}}
+			resp, err = s.connect.Do(ctx, connect.Request{Method: http.MethodGet, Path: "/app/cameras/" + id + "/snapshots/last", Query: query})
+			if connect.IsStatus(err, http.StatusNotFound) {
+				// WebRTC cameras (Buddy3D) may never have pushed a full snapshot;
+				// the web app falls back to the thumbnail endpoint.
+				resp, err = s.connect.Do(ctx, connect.Request{Method: http.MethodGet, Path: "/thumbnail/camera/" + id, Query: query})
+			}
+			if err != nil {
+				return nil, nil, err
+			}
 		}
 		defer resp.Body.Close()
 		img, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))

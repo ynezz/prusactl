@@ -139,6 +139,7 @@ var spellings = []spelling{
 		"call again with plate_clear=true", "run it again with --plate-clear"},
 	{"; pass printer as one of",
 		"pass printer as one of", "pass --printer as one of"},
+	{"; pass version", "pass version", "pass --version"},
 	{"or delete it through Prusa Connect with",
 		`delete it through Prusa Connect with via="connect"`, "delete it through Prusa Connect with --via connect"},
 	// via=connect and via=direct reach the reader interpolated, so they are

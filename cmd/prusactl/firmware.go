@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 )
 
 // firmwareCmd is the terminal side of get_firmware_status and update_firmware.
@@ -44,7 +45,11 @@ func renderFirmwareStatus(w io.Writer, m map[string]any) {
 	fmt.Fprintf(w, "%-9s %s  (%s)\n", "Latest:", field(m, "latest"), field(m, "state"))
 	switch {
 	case field(m, "latest") == "":
+		// Checked before the verdict on purpose: with no latest version there
+		// is nothing to update to whatever the verdict says.
 		fmt.Fprintln(w, "\nPrusa Connect doesn't say which firmware is the latest for this printer.")
+	case field(m, "update_available") == "": // no verdict: the tool said why
+		fmt.Fprintf(w, "\n%s.\n", strings.TrimSuffix(field(m, "note"), "."))
 	case field(m, "update_available") != "true":
 		fmt.Fprintln(w, "\nUp to date.")
 	case field(m, "update_supported") == "true":

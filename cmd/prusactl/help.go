@@ -288,11 +288,14 @@ Prusa Connect offers for it.
 
 update has Prusa Connect copy the firmware file to the printer's USB drive,
 then installs it with the FLASH command, which restarts the printer. It waits
-for the copy (a few minutes at most) and does nothing if the printer already
-runs the latest and you give no --version. FLASH is accepted only while the
-printer is idle, ready, finished or stopped: during a print the file is left
-on the drive, not installed, and you run update again afterwards. The printer
-may ask you to confirm on its screen. Both go through Prusa Connect only.`,
+for the copy (a few minutes at most). Without --version it goes by Prusa
+Connect's own verdict: it installs the latest when Connect says the firmware is
+outdated, does nothing when Connect says it is current, and refuses when there
+is no verdict, so a printer newer than Connect's latest is never downgraded by
+accident. It refuses before copying anything unless the printer is idle, ready,
+finished or stopped; a print that starts during the copy leaves the file on the
+drive, not installed, and the result says so. The printer may ask you to
+confirm on its screen. Both go through Prusa Connect only.`,
 		Flags: flags(printerFlags, []flagSpec{
 			{Name: "version", Value: "X.Y.Z", Usage: "for update, a version other than the latest, e.g. 6.5.7"},
 		}),

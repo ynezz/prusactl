@@ -330,8 +330,8 @@ to an agent. `--raw` shows them.
 `prusactl firmware` shows the firmware the printer runs and the latest one Prusa
 Connect offers for it. `prusactl firmware update` has Connect copy its hosted
 `.bbf` to the printer's USB drive and then installs it with the `FLASH` command,
-which restarts the printer. It waits for the copy and does nothing if the
-printer already runs the latest.
+which restarts the printer. It waits for the copy. Without `--version` it goes by
+Connect's own verdict on the firmware, and refuses to decide when there is none.
 
 ```sh
 prusactl firmware                       # running vs latest
@@ -339,8 +339,10 @@ prusactl firmware update [--version X]  # copy, then install
 ```
 
 `FLASH` is accepted only while the printer is idle, ready, finished or stopped.
-During a print the file is copied and left on the drive, not installed; run
-`update` again afterwards. The printer may ask for a confirmation on its screen.
+While a print is running it refuses before copying anything; run it again when the
+print has ended. Whether an update is due is Prusa Connect's own verdict, so a printer
+newer than Connect's latest is never downgraded unless you pass `--version`. The
+printer may ask for a confirmation on its screen.
 Firmware goes through Prusa Connect only, so you need `prusactl login`.
 
 ## Limits

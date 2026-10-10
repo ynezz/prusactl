@@ -52,8 +52,31 @@ func firmwareOf(detail map[string]any) firmwareFacts {
 	return f
 }
 
-func (f firmwareFacts) upToDate() bool {
-	return f.Latest != "" && stripBuild(f.Current) == stripBuild(f.Latest)
+// verdict is Prusa Connect's own reading of the running firmware, the one its
+// update button goes by: "outdated" means an update is due, "current" that
+// Connect calls it supported, and "unknown" anything else, including no state
+// at all, which nothing is decided on. Comparing version strings instead would
+// call a printer running something newer than Connect's "latest" (a release
+// candidate, say) out of date and flash the older build over it.
+func (f firmwareFacts) verdict() string {
+	switch f.State {
+	case "outdated":
+		return "outdated"
+	case "supported":
+		return "current"
+	}
+	return "unknown"
+}
+
+// explicitVersionHint finishes a note that couldn't decide, with what is
+// still possible: an update by explicit version is accepted (not "installs":
+// the printer can still refuse the flash), and only where Connect offers
+// updates for the printer at all.
+func explicitVersionHint(canUpdate bool) string {
+	if canUpdate {
+		return "; an update with an explicit version is still accepted"
+	}
+	return "; and Prusa Connect doesn't offer firmware updates for this printer"
 }
 
 // firmwareRecord looks up a firmware file Connect hosts, by version or, when
@@ -124,7 +147,11 @@ func (s *Server) copyFirmware(ctx context.Context, progress func(string), p prin
 		if err != nil {
 			return "", err
 		}
-		if fp := str(cur, "path"); fp != "" {
+		tr, _ := cur["transferring"].(map[string]any)
+		// A path with a transfer still running would be a file the printer is
+		// still writing; FLASH on that is a truncated image for the bootloader
+		// to refuse.
+		if fp := str(cur, "path"); fp != "" && tr == nil {
 			return fp, nil
 		}
 		if planned, _ := cur["planned"].(map[string]any); planned != nil {
@@ -132,7 +159,6 @@ func (s *Server) copyFirmware(ctx context.Context, progress func(string), p prin
 				return "", fmt.Errorf("Prusa Connect could not copy the firmware to the printer (%s)", orDefault(why, "rejected"))
 			}
 		}
-		tr, _ := cur["transferring"].(map[string]any)
 		state := fmt.Sprintf("%v/%v", cur["planned"] != nil, tr["transferred"])
 		msg := "waiting for the printer to start the download"
 		switch {
@@ -181,8 +207,23 @@ func (s *Server) addFirmwareTools() {
 			return nil, nil, err
 		}
 		f := firmwareOf(detail)
-		out := map[string]any{"printer": p.Name, "current": f.Current, "latest": f.Latest, "state": f.State,
-			"update_available": f.Latest != "" && !f.upToDate(), "update_supported": f.CanUpdate}
+		out := map[string]any{"printer": p.Name, "current": f.Current, "latest": f.Latest, "state": f.State, "update_supported": f.CanUpdate}
+		switch f.verdict() {
+		case "outdated":
+			if f.Latest == "" {
+				// Outdated, but no version to update to: not "no update", so
+				// update_available is left out, the same way as below.
+				out["note"] = "Prusa Connect says the firmware is outdated but doesn't say which version is the latest" + explicitVersionHint(f.CanUpdate)
+			} else {
+				out["update_available"] = true
+			}
+		case "current":
+			out["update_available"] = false
+		default:
+			// Not "up to date": nobody has said so. update_available is left
+			// out rather than guessed, and update_firmware refuses to guess too.
+			out["note"] = fmt.Sprintf("Prusa Connect gives no verdict on this firmware (state %q), so whether an update is due is unknown", orDefault(f.State, "none")) + explicitVersionHint(f.CanUpdate)
+		}
 		return jsonResult(out)
 	})
 
@@ -190,10 +231,13 @@ func (s *Server) addFirmwareTools() {
 		Name: "update_firmware",
 		Description: "Install firmware through Prusa Connect: Connect copies the .bbf it hosts (the latest, or version) to the " +
 			"printer's USB drive, then sends the FLASH command, and the printer installs it and restarts. Waits for the copy " +
-			"(a few minutes at most). Does nothing when the printer is already on the latest and no version is given. FLASH " +
-			"runs only while the printer is idle, ready, finished or stopped: otherwise the file is left on the USB drive, " +
-			"not installed, and the result says so; run this again when the print has ended. A printer that is installing " +
-			"firmware may ask for a confirmation on its screen.",
+			"(a few minutes at most). Without version it goes by Prusa Connect's own verdict: installs the latest when " +
+			"Connect says the firmware is outdated, does nothing when Connect says it is current, and refuses when there " +
+			"is no verdict, so a printer newer than Connect's latest is never downgraded by accident. Refuses before copying " +
+			"anything unless the printer is idle, ready, finished or stopped; a print that starts during the copy leaves " +
+			"the file on the USB drive, not installed, and the result says so. installed is true only when the printer " +
+			"confirmed FLASH. Run it only when the user asked for a firmware update: it restarts the printer, which may " +
+			"ask for a confirmation on its screen.",
 		Annotations: mutating("Update firmware", true),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in updateInput) (*mcp.CallToolResult, any, error) {
 		p, err := s.connectPrinter(ctx, in.printerRef)
@@ -208,13 +252,28 @@ func (s *Server) addFirmwareTools() {
 		if !f.CanUpdate {
 			return nil, nil, fmt.Errorf("Prusa Connect doesn't offer firmware updates for %s", p.Name)
 		}
+		// Refuse before anything is copied, not only before FLASH: a .bbf
+		// written to the USB drive a print is reading from, followed by two
+		// minutes of polling and a success exit, is not a refusal.
+		// Through connectState, not stateOf: a record with no state is Prusa
+		// changing its API, to be reported as such, not a printer to refuse.
+		st, err := connectState(detail, p.UUID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !canStart(st) {
+			return nil, nil, &stateError{msg: fmt.Sprintf("%s is %s; firmware installs only while the printer is idle, ready, finished or stopped, so nothing was copied. Run this again when it is", p.Name, st)}
+		}
 		version := strings.TrimSpace(in.Version)
 		if version == "" {
+			switch f.verdict() {
+			case "unknown":
+				return nil, nil, fmt.Errorf("Prusa Connect gives no verdict on this printer's firmware (state %q), so whether an update is due is unknown; pass version", orDefault(f.State, "none"))
+			case "current":
+				return jsonResult(map[string]any{"printer": p.Name, "current": f.Current, "up_to_date": true, "note": "Prusa Connect says this firmware is current; nothing done."})
+			}
 			if f.Latest == "" {
 				return nil, nil, errors.New("Prusa Connect doesn't say which firmware is the latest for this printer; pass version")
-			}
-			if f.upToDate() {
-				return jsonResult(map[string]any{"printer": p.Name, "current": f.Current, "up_to_date": true, "note": "Already on the latest firmware; nothing done."})
 			}
 			version = stripBuild(f.Latest)
 		}
@@ -246,10 +305,24 @@ func (s *Server) addFirmwareTools() {
 			out["note"] = fmt.Sprintf("Firmware %s is on the printer at %s but not installed: %s. Run this again when the printer is idle.", version, file, blocked)
 		case err != nil:
 			return nil, nil, fmt.Errorf("the firmware is on the printer at %s, but installing it failed: %w", file, err)
+		case res.State != "FINISHED":
+			// Connect answered the sync call, but the event that ended the wait
+			// isn't the printer accepting the command. Saying "installed" here
+			// would report a refusal as a success.
+			out["installed"] = false
+			out["command_state"] = res.State
+			if res.State == "REJECTED" {
+				out["note"] = fmt.Sprintf("Firmware %s is on the printer at %s, but the printer rejected FLASH and did not install it. Check its screen.", version, file)
+			} else {
+				// CREATED or EMIT is a command still on its way, and the
+				// printer may well be flashing; what is true is only that
+				// nothing confirmed it.
+				out["note"] = fmt.Sprintf("Firmware %s is on the printer at %s. FLASH was sent (%s) but the printer hasn't confirmed installing it: check its screen, and the firmware version once it is back.", version, file, orDefault(res.State, "no outcome reported"))
+			}
 		default:
 			out["installed"] = true
 			out["command_state"] = res.State
-			out["note"] = fmt.Sprintf("Firmware %s is on the printer at %s. FLASH sent: the printer installs it and restarts. Check its screen.", version, file)
+			out["note"] = fmt.Sprintf("Firmware %s is on the printer at %s. FLASH accepted: the printer installs it and restarts. Check its screen.", version, file)
 		}
 		return jsonResult(out)
 	})

@@ -216,3 +216,16 @@ func TestRenderFirmwareStatus(t *testing.T) {
 		}
 	}
 }
+
+// With no verdict from Connect the status tool leaves update_available out and
+// says why; the terminal must print that reason, not "Up to date".
+func TestRenderFirmwareStatusWithoutAVerdict(t *testing.T) {
+	var out strings.Builder
+	renderFirmwareStatus(&out, map[string]any{
+		"printer": "Core One", "current": "6.5.7", "latest": "6.8.1", "state": "unsupported",
+		"note": "Prusa Connect gives no verdict on this firmware (state \"unsupported\"), so whether an update is due is unknown; an update with an explicit version is still accepted",
+	})
+	if strings.Contains(out.String(), "Up to date") || !strings.Contains(out.String(), "no verdict") {
+		t.Errorf("rendered:\n%s", out.String())
+	}
+}

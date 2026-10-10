@@ -18,13 +18,18 @@ import (
 // (path) after pollsToCopy polls of its record, or never when that is 0
 // and onPrinter is false.
 type fwConnect struct {
-	mu          sync.Mutex
-	state       string
-	current     string
-	latest      string
-	onPrinter   bool
-	pollsToCopy int
-	abort       string
+	support        string // support.state Connect reports; "outdated" when empty
+	noSupportState bool   // Connect gives no verdict at all
+	flashEvent     string // what the sync FLASH answers with; FINISHED when empty
+	printAfterCopy bool   // a print starts the moment the file lands, for the blocked path
+	noState        bool   // the printer record carries no connect_state (an API change)
+	mu             sync.Mutex
+	state          string
+	current        string
+	latest         string
+	onPrinter      bool
+	pollsToCopy    int
+	abort          string
 
 	polls    int
 	queued   []map[string]any
@@ -40,11 +45,15 @@ func (f *fwConnect) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/app/printers":
 		fmt.Fprint(w, `{"printers":[{"uuid":"u1","name":"Core One","team_id":1}]}`)
 	case "/app/printers/u1":
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		rec := map[string]any{
 			"uuid": "u1", "name": "Core One", "connect_state": f.state, "firmware": f.current,
 			"allowed_functionalities": []string{"files", "fw_update", "fw_update_path"},
-			"support":                 map[string]any{"current": f.current, "latest": f.latest, "stable": f.latest, "state": "outdated"},
-		})
+			"support":                 map[string]any{"current": f.current, "latest": f.latest, "stable": f.latest, "state": f.supportState()},
+		}
+		if f.noState {
+			delete(rec, "connect_state")
+		}
+		_ = json.NewEncoder(w).Encode(rec)
 	case "/app/printers/u1/storages":
 		fmt.Fprint(w, `{"storages":[{"mountpoint":"/sd","type":"SD_CARD","read_only":true},{"mountpoint":"/usb","name":"usb","type":"USB","read_only":false}]}`)
 	case "/app/printers/u1/supported-commands":
@@ -64,6 +73,9 @@ func (f *fwConnect) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case f.onPrinter || (f.pollsToCopy > 0 && f.polls >= f.pollsToCopy):
 			rec["path"] = "/usb/COREON~3.BBF"
+			if f.printAfterCopy {
+				f.state = "PRINTING"
+			}
 		case f.pollsToCopy >= 4 && f.polls == f.pollsToCopy-1: // transfer over, file not reported yet
 		case f.abort != "":
 			rec["planned"] = map[string]any{"id": 7, "abort_reason": f.abort}
@@ -82,10 +94,17 @@ func (f *fwConnect) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		f.commands = append(f.commands, body)
-		fmt.Fprint(w, `{"event":{"event":"FINISHED"}}`)
+		fmt.Fprintf(w, `{"event":{"event":%q}}`, orDefault(f.flashEvent, "FINISHED"))
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (f *fwConnect) supportState() string {
+	if f.noSupportState {
+		return ""
+	}
+	return orDefault(f.support, "outdated")
 }
 
 func fwTools(t *testing.T, fc *fwConnect, stall time.Duration) *mcp.ClientSession {
@@ -110,14 +129,14 @@ func TestFirmwareStatus(t *testing.T) {
 	if got.Current != "6.5.7+10473" || got.Latest != "6.8.1" || got.State != "outdated" || !got.Update || !got.Supported {
 		t.Errorf("%s", text)
 	}
-	fc.current = "6.8.1+16182" // the build suffix doesn't make it differ
+	fc.current, fc.support = "6.8.1+16182", "supported" // Connect's verdict says it's current
 	if text, _ := call(t, fwTools(t, fc, time.Second), "get_firmware_status", nil); !strings.Contains(text, `"update_available":false`) {
 		t.Errorf("%s", text)
 	}
 }
 
 func TestUpdateFirmwareWhenUpToDateDoesNothing(t *testing.T) {
-	fc := &fwConnect{state: "IDLE", current: "6.8.1+16182", latest: "6.8.1"}
+	fc := &fwConnect{state: "IDLE", current: "6.8.1+16182", latest: "6.8.1", support: "supported"}
 	text, isErr := call(t, fwTools(t, fc, time.Second), "update_firmware", nil)
 	if isErr || !strings.Contains(text, `"up_to_date":true`) {
 		t.Fatalf("%q (error=%v)", text, isErr)
@@ -162,8 +181,24 @@ func TestUpdateFirmwareUsesTheFileAlreadyOnThePrinter(t *testing.T) {
 }
 
 // FLASH is refused while printing: the file is copied and left there.
-func TestUpdateFirmwareWhilePrintingLeavesTheFileStaged(t *testing.T) {
+// A printer that is printing is refused before anything is copied, the way
+// upload_file then=print refuses before a long upload: the alternative wrote a
+// file to the drive the print was reading from and then reported success.
+func TestUpdateFirmwareRefusesWhilePrinting(t *testing.T) {
 	fc := &fwConnect{state: "PRINTING", current: "6.5.7", latest: "6.8.1", pollsToCopy: 1}
+	text, isErr := call(t, fwTools(t, fc, time.Second), "update_firmware", nil)
+	if !isErr || !strings.Contains(text, "PRINTING") || !strings.Contains(text, "nothing was copied") {
+		t.Fatalf("%q (error=%v)", text, isErr)
+	}
+	if len(fc.queued)+len(fc.commands) != 0 {
+		t.Errorf("queued %v, commands %v", fc.queued, fc.commands)
+	}
+}
+
+// A print that starts while the file is on its way can't be helped; then the
+// file stays on the drive and the result must not claim more than that.
+func TestUpdateFirmwareLeavesTheFileStagedWhenAPrintStartsDuringTheCopy(t *testing.T) {
+	fc := &fwConnect{state: "IDLE", current: "6.5.7", latest: "6.8.1", pollsToCopy: 1, printAfterCopy: true}
 	text, isErr := call(t, fwTools(t, fc, time.Second), "update_firmware", nil)
 	if isErr {
 		t.Fatal(text)
@@ -227,10 +262,80 @@ func TestUpdateFirmwareProgressIsDeduplicatedAndAccurate(t *testing.T) {
 
 // Nothing says "installing" when FLASH is refused.
 func TestUpdateFirmwareDoesNotClaimToInstallWhenBlocked(t *testing.T) {
-	fc := &fwConnect{state: "PRINTING", current: "6.5.7", latest: "6.8.1", pollsToCopy: 1}
+	fc := &fwConnect{state: "IDLE", current: "6.5.7", latest: "6.8.1", pollsToCopy: 1, printAfterCopy: true}
 	for _, m := range progressOf(t, fc) {
 		if strings.Contains(m, "installing") {
 			t.Errorf("progress %q while FLASH was refused", m)
 		}
+	}
+}
+
+// The record Connect returns for a command it waited for says CREATED; the
+// event that ended the wait says what the printer did. A FLASH the printer
+// turned down was reported as installed.
+func TestUpdateFirmwareReportsARejectedFlash(t *testing.T) {
+	fc := &fwConnect{state: "IDLE", current: "6.5.7", latest: "6.8.1", pollsToCopy: 1, flashEvent: "REJECTED"}
+	text, isErr := call(t, fwTools(t, fc, time.Second), "update_firmware", nil)
+	if isErr {
+		t.Fatal(text)
+	}
+	if !strings.Contains(text, `"installed":false`) || !strings.Contains(text, "REJECTED") || strings.Contains(text, "restarts") {
+		t.Errorf("a rejected FLASH was reported as: %s", text)
+	}
+}
+
+// "Up to date" is Connect's verdict, not a string comparison: a printer running
+// something newer than Connect's latest used to be flashed back to it.
+func TestUpdateFirmwareNeverDowngradesByAccident(t *testing.T) {
+	fc := &fwConnect{state: "IDLE", current: "7.0.0-RC1+17000", latest: "6.8.1", support: "supported"}
+	cs := fwTools(t, fc, time.Second)
+	text, isErr := call(t, cs, "update_firmware", nil)
+	if isErr || !strings.Contains(text, `"up_to_date":true`) {
+		t.Fatalf("%q (error=%v)", text, isErr)
+	}
+	if len(fc.queued)+len(fc.commands) != 0 {
+		t.Errorf("flashed an older build over a newer one: %v %v", fc.queued, fc.commands)
+	}
+	if text, _ := call(t, cs, "get_firmware_status", nil); !strings.Contains(text, `"update_available":false`) {
+		t.Errorf("status offered a downgrade: %s", text)
+	}
+
+	// Without a verdict there is nothing safe to decide on.
+	fc = &fwConnect{state: "IDLE", current: "6.5.7", latest: "6.8.1", noSupportState: true}
+	if text, isErr := call(t, fwTools(t, fc, time.Second), "update_firmware", nil); !isErr || !strings.Contains(text, "pass version") {
+		t.Errorf("no verdict, yet: %q (error=%v)", text, isErr)
+	}
+}
+
+// A verdict Connect might use that prusactl doesn't know ("unsupported", or a
+// new one) is not "up to date": nobody said so. Status leaves update_available
+// out and says why; update refuses to decide.
+func TestFirmwareUnknownVerdictDecidesNothing(t *testing.T) {
+	fc := &fwConnect{state: "IDLE", current: "6.5.7", latest: "6.8.1", support: "unsupported", pollsToCopy: 1}
+	cs := fwTools(t, fc, time.Second)
+	text, isErr := call(t, cs, "update_firmware", nil)
+	if !isErr || !strings.Contains(text, "pass version") || !strings.Contains(text, "unsupported") {
+		t.Errorf("update: %q (error=%v)", text, isErr)
+	}
+	if len(fc.queued)+len(fc.commands) != 0 {
+		t.Errorf("acted on an unknown verdict: %v %v", fc.queued, fc.commands)
+	}
+	text, _ = call(t, cs, "get_firmware_status", nil)
+	if strings.Contains(text, "update_available") || !strings.Contains(text, "no verdict") {
+		t.Errorf("status decided for Connect: %s", text)
+	}
+	// An explicit version still installs.
+	if text, isErr := call(t, cs, "update_firmware", map[string]any{"version": "6.8.1"}); isErr || !strings.Contains(text, `"installed":true`) {
+		t.Errorf("explicit version: %q (error=%v)", text, isErr)
+	}
+}
+
+// A printer record with no state is Prusa changing its API, which is reported
+// as such; it is not a printer in some state that refuses to install.
+func TestUpdateFirmwareReportsAMissingStateAsAnAPIChange(t *testing.T) {
+	fc := &fwConnect{state: "IDLE", current: "6.5.7", latest: "6.8.1", noState: true}
+	text, isErr := call(t, fwTools(t, fc, time.Second), "update_firmware", nil)
+	if !isErr || !strings.Contains(text, "connect_state") || strings.Contains(text, "nothing was copied") {
+		t.Errorf("%q (error=%v)", text, isErr)
 	}
 }

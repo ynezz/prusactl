@@ -25,7 +25,7 @@
   runout or errors. Needs Connect.
 - **Run G-code:** any G-code, over the direct connection, while the printer is idle.
 
-It is one Go binary with no browser involved. Setup is two terminal prompts.
+It is one Go binary; no browser is needed. Setup is two terminal prompts.
 
 ## Things you can ask
 
@@ -188,7 +188,10 @@ the address the browser ends on after you approve, which looks like
 `code=` value also works). An agent can drive it.
 There is no loopback mode: Prusa Account rejects a
 `127.0.0.1` redirect for the Connect client ("Mismatching redirect URI"), so
-the code can only be read from the address bar.
+the code can only be read from the address bar. It also relies on Connect's
+`auth-callback` page leaving a code alone when its `state` isn't one the page
+issued, which is how the page behaves today. If Prusa changes that, the sign-in
+fails at the token step, and the fix is an update to prusactl.
 
 - **Your password** is sent only to account.prusa3d.com and is never stored.
 - **Where tokens are kept:** the OS keychain (macOS Keychain, Secret Service, or

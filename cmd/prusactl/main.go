@@ -328,7 +328,7 @@ func login(ctx context.Context, o options, session *auth.Session, cc *connect.Cl
 			if !o.on("no-open") && openBrowser(u) == nil {
 				fmt.Fprintln(os.Stderr, "(Opened it in your browser.)")
 			}
-			fmt.Fprintln(os.Stderr, "Then give the address the browser ended on (https://connect.prusa3d.com/login/auth-callback?code=...) on one line of stdin.")
+			fmt.Fprintln(os.Stderr, "Then paste the address the browser ended on (https://connect.prusa3d.com/login/auth-callback?code=...) here and press Enter.")
 		}, func() (string, error) { return ask("> ") })
 	} else {
 		if !term.IsTerminal(int(os.Stdin.Fd())) {
